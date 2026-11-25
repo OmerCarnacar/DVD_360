@@ -56,6 +56,23 @@ public sealed class IsoFileSystem
     public long VolumeSpaceSize { get; private init; }
     public ISectorSource Source => _image;
     public List<string> Warnings { get; } = new();
+    /// <summary>First volume descriptor sector (session start + 16).</summary>
+    public long DescriptorLba { get; private init; }
+
+    /// <summary>
+    /// Sectors that hold the file system itself (volume descriptors, path tables, directories). A partial rescue
+    /// must include these, otherwise the rescued files could not be found in the image afterwards.
+    /// </summary>
+    public IEnumerable<(long Start, long Count)> MetadataRanges()
+    {
+        yield return (Math.Max(0, DescriptorLba - 16), 16 + 48); // system area + descriptors + (usually) path tables
+        yield return (Root.Extent, Root.SectorCount);
+        foreach (var d in Root.Descendants().Where(e => e.IsDirectory)) yield return (d.Extent, d.SectorCount);
+    }
+
+    /// <summary>Finds the entry with the same path (e.g. map a file picked on the live disc to the rescued image).</summary>
+    public IsoEntry? Find(string fullPath) =>
+        Root.Descendants().FirstOrDefault(e => string.Equals(e.FullPath, fullPath, StringComparison.OrdinalIgnoreCase));
 
     public IEnumerable<IsoEntry> Files => Root.Descendants().Where(e => !e.IsDirectory);
     public bool HasForm2Files => Files.Any(f => f.IsForm2);
@@ -97,7 +114,7 @@ public sealed class IsoFileSystem
             if (pvdRoot == null && jRoot == null) continue;
             bool joliet = jRoot != null;
             var root = new IsoEntry { Name = "", IsDirectory = true, Extent = joliet ? jRoot!.Value : pvdRoot!.Value, RecordedSize = joliet ? jSize!.Value : pvdSize!.Value };
-            var fs = new IsoFileSystem(image, root, volume, joliet) { VolumeSpaceSize = volumeSpace };
+            var fs = new IsoFileSystem(image, root, volume, joliet) { VolumeSpaceSize = volumeSpace, DescriptorLba = start + 16 };
             fs.ReadTree(root);
             if (joliet && pvdRoot != null) fs.CopyXaFlagsFromIsoTree(pvdRoot.Value, pvdSize!.Value);
             foreach (var f in fs.Files) fs.FinishFile(f);
@@ -261,15 +278,20 @@ public sealed class IsoFileSystem
 
     public sealed record ExtractReport(int Files, int Directories, long Bytes, List<IsoEntry> Damaged);
 
-    public ExtractReport ExtractAll(string outputDir, IProgress<(long Done, long Total, string Name)>? progress = null, CancellationToken ct = default)
+    public ExtractReport ExtractAll(string outputDir, IProgress<(long Done, long Total, string Name)>? progress = null, CancellationToken ct = default) =>
+        Extract(Files, outputDir, progress, ct);
+
+    /// <summary>Extracts just the given files (keeping their folders).</summary>
+    public ExtractReport Extract(IEnumerable<IsoEntry> selection, string outputDir, IProgress<(long Done, long Total, string Name)>? progress = null, CancellationToken ct = default)
     {
         string root = Path.GetFullPath(outputDir);
         Directory.CreateDirectory(root);
-        var files = Files.ToList();
+        var files = selection.Where(f => !f.IsDirectory).Distinct().ToList();
+        var wanted = new HashSet<IsoEntry>(files.SelectMany(f => Ancestors(f)));
         long total = files.Sum(f => f.DataSize), done = 0;
         int dirs = 0;
         var damaged = new List<IsoEntry>();
-        foreach (var d in Root.Descendants().Where(e => e.IsDirectory))
+        foreach (var d in Root.Descendants().Where(e => e.IsDirectory && wanted.Contains(e)))
         {
             Directory.CreateDirectory(SafeJoin(root, d));
             dirs++;
@@ -288,6 +310,11 @@ public sealed class IsoFileSystem
         progress?.Report((total, total, ""));
         WriteReport(Path.Combine(root, "_DVD360_rapor.txt"), files, damaged);
         return new ExtractReport(files.Count, dirs, total, damaged);
+    }
+
+    private static IEnumerable<IsoEntry> Ancestors(IsoEntry e)
+    {
+        for (var p = e.Parent; p != null; p = p.Parent) yield return p;
     }
 
     private static string SafeJoin(string root, IsoEntry e, string? leafName = null)

@@ -303,29 +303,30 @@ public partial class MainWindow : Window
     }
 
     private void Start_Click(object sender, RoutedEventArgs e) => _ = RunRescueAsync(retryBad: false);
-    private void RetryBad_Click(object sender, RoutedEventArgs e) => _ = RunRescueAsync(retryBad: true);
+    private void RetryBad_Click(object sender, RoutedEventArgs e) => _ = RunRescueAsync(retryBad: true, _scopeRanges);
+    private List<(long Start, long Count)>? _scopeRanges; // set while only picked files are being rescued
     private void Stop_Click(object sender, RoutedEventArgs e) => _rescueCts?.Cancel();
 
-    private async Task RunRescueAsync(bool retryBad)
+    private async Task<bool> RunRescueAsync(bool retryBad, List<(long Start, long Count)>? ranges = null)
     {
-        if (_engine != null) return;
-        if (_driveLetter == null || _disc == null) { Warn(Loc.T("InsertDisc")); return; }
+        if (_engine != null) return false;
+        if (_driveLetter == null || _disc == null) { Warn(Loc.T("InsertDisc")); return false; }
         string? path = TargetPath();
-        if (path == null) { Warn(Loc.T("ChooseFolderFirst")); return; }
+        if (path == null) { Warn(Loc.T("ChooseFolderFirst")); return false; }
         try { Directory.CreateDirectory(Path.GetDirectoryName(path)!); }
-        catch (Exception ex) { Warn(ex.Message); return; }
+        catch (Exception ex) { Warn(ex.Message); return false; }
 
         if (File.Exists(path) && !File.Exists(path + ".map"))
         {
             string q = Loc.I.English ? $"{Path.GetFileName(path)} already exists. Overwrite it?" : $"{Path.GetFileName(path)} zaten var. Üzerine yazılsın mı?";
-            if (MessageBox.Show(this, q, "DVD 360", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+            if (MessageBox.Show(this, q, "DVD 360", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return false;
             File.Delete(path);
         }
         try
         {
             long free = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(path))!).AvailableFreeSpace;
             long need = _disc.TotalBytes - (File.Exists(path) ? new FileInfo(path).Length : 0);
-            if (free < need) { Warn(Loc.T("NotEnoughSpace")); return; }
+            if (free < need) { Warn(Loc.T("NotEnoughSpace")); return false; }
         }
         catch { }
 
@@ -352,10 +353,12 @@ public partial class MainWindow : Window
             _engine = null;
             Warn(ex.Message);
             _ = DetectDiscAsync();
-            return;
+            return false;
         }
 
         var engine = _engine;
+        _scopeRanges = ranges;
+        if (ranges != null) Disc.SetHighlight(ranges);
         engine.Log += m => Dispatcher.BeginInvoke(() => AddLog(m));
         if (engine.IsResume) AddLog(Loc.T("Resuming"));
         _rescueCts = new CancellationTokenSource();
@@ -363,11 +366,13 @@ public partial class MainWindow : Window
         Disc.SetMode(DiscViewMode.Reading, _disc.VolumeLabel);
         _uiTimer.Start();
         string? finalMessage = null;
-        bool error = false;
+        bool error = false, ok = false;
         try
         {
-            await (retryBad ? engine.RetryBadAsync(_rescueCts.Token) : engine.RunAsync(_rescueCts.Token));
-            finalMessage = engine.BadSectors == 0
+            await (retryBad ? engine.RetryBadAsync(_rescueCts.Token, ranges) : engine.RunAsync(_rescueCts.Token, ranges));
+            ok = true;
+            finalMessage = ranges != null ? Loc.T("SelectedRead")
+                : engine.BadSectors == 0
                 ? Loc.T("DoneAllGood")
                 : Loc.T("DoneSomeBad", engine.BadSectors.ToString("N0"), FormatBytes(engine.BadSectors * engine.Info.SectorSize));
         }
@@ -388,6 +393,16 @@ public partial class MainWindow : Window
         _previewMap = engine.Map;
         RefreshTreeStatus();
         bool complete = engine.IsComplete;
+        if (ranges != null)
+        {
+            // Only the picked files were read: the caller extracts them. Keep the disc highlight.
+            Disc.SetMode(DiscViewMode.Idle, _disc?.VolumeLabel ?? "");
+            Disc.Render(engine.Map, engine.Stats.CurrentLba);
+            RetryButton.IsEnabled = engine.BadSectors > 0;
+            StartButton.Content = Loc.T(complete ? "Start" : "Continue");
+            if (error) Warn(finalMessage!);
+            return ok;
+        }
         Disc.SetMode(complete ? DiscViewMode.Done : DiscViewMode.Idle, _disc?.VolumeLabel ?? "");
         Disc.Render(engine.Map, engine.Stats.CurrentLba);
         RetryButton.IsEnabled = engine.BadSectors > 0;
@@ -396,13 +411,60 @@ public partial class MainWindow : Window
         {
             LoadImage(path);
             if (_fs?.HasForm2Files == true) AddDiscVideos(switchTab: false);
+            if (AutoIsoBox.IsChecked == true && _fs?.Source is DiscImage done)
+            {
+                string iso = DefaultIsoPath(done);
+                if (await CreateIso(done, iso)) AddLog(Loc.T("IsoSavedTo", iso));
+            }
         }
         if (error) Warn(finalMessage);
         else MessageBox.Show(this, finalMessage, "DVD 360", MessageBoxButton.OK, engine.BadSectors == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        return ok;
+    }
+
+    private async void RescueSaveIso_Click(object sender, RoutedEventArgs e)
+    {
+        if (_engine != null) { Warn(Loc.T("StopFirst")); return; }
+        string? path = TargetPath();
+        if (path == null || !File.Exists(path)) { Warn(Loc.T("ReadFirst")); return; }
+
+        // A partial image is still useful: unread parts are left empty.
+        try
+        {
+            var map = File.Exists(path + ".map") ? SectorMap.Load(path + ".map") : null;
+            if (map != null && map.CountOf(SectorState.Ok) + map.CountOf(SectorState.Skipped) < map.Count)
+            {
+                double pct = 100.0 * map.CountOf(SectorState.Ok) / Math.Max(1, map.Count - map.CountOf(SectorState.Skipped));
+                if (MessageBox.Show(this, Loc.T("IsoPartial", pct), "DVD 360", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+            }
+        }
+        catch { }
+
+        if (_fs?.Source is not DiscImage img || !string.Equals(img.Path, path, StringComparison.OrdinalIgnoreCase))
+        {
+            CloseLiveContent(clearTree: true);
+            LoadImage(path);
+        }
+        if (_fs?.Source is not DiscImage image) return;
+        var dlg = new SaveFileDialog
+        {
+            Filter = "ISO (*.iso)|*.iso",
+            FileName = Path.GetFileName(DefaultIsoPath(image)),
+            InitialDirectory = Path.GetDirectoryName(image.Path),
+        };
+        if (dlg.ShowDialog(this) != true) return;
+        Tabs.SelectedIndex = 1; // the contents tab shows the progress and the files
+        if (await CreateIso(image, dlg.FileName))
+        {
+            AddLog(Loc.T("IsoSavedTo", dlg.FileName));
+            Process.Start("explorer.exe", $"/select,\"{dlg.FileName}\"");
+        }
     }
 
     private void SetRescueBusy(bool busy)
     {
+        RescueSelectedButton.IsEnabled = !busy;
+        RescueIsoButton.IsEnabled = !busy;
         StartButton.IsEnabled = !busy;
         RetryButton.IsEnabled = false;
         StopButton.IsEnabled = busy;
@@ -414,6 +476,13 @@ public partial class MainWindow : Window
         var engine = _engine;
         if (engine == null) return;
         ShowStats(engine.Map, engine.Stats);
+        if (_scopeRanges != null)
+        {
+            long total = _scopeRanges.Sum(r => r.Count), pending = engine.PendingIn(_scopeRanges);
+            PassText.Text = Loc.T("Pass_" + engine.Stats.Pass) + "  •  " + Loc.T("SelectedOnly");
+            PercentText.Text = $"{100.0 * (total - pending) / Math.Max(1, total):N1}%";
+            Progress.Value = 1000.0 * (total - pending) / Math.Max(1, total);
+        }
         Disc.Render(engine.Map, engine.Stats.CurrentLba);
         if (++_treeTick % 5 == 0) RefreshTreeStatus();
     }
@@ -642,6 +711,53 @@ public partial class MainWindow : Window
             return file;
         });
         if (File.Exists(file)) Process.Start(new ProcessStartInfo(file) { UseShellExecute = true });
+    }
+
+    // ---- rescue only the picked files
+
+    private void SelectAll_Click(object sender, RoutedEventArgs e) { foreach (var n in _rootNode?.Children ?? []) n.IsChecked = true; }
+    private void SelectNone_Click(object sender, RoutedEventArgs e) { foreach (var n in _rootNode?.Children ?? []) n.IsChecked = false; }
+
+    private async void RescueSelected_Click(object sender, RoutedEventArgs e)
+    {
+        if (_rootNode == null || _fs == null) { Warn(Loc.T("NoContent")); return; }
+        var picked = _rootNode.SelfAndDescendants().Where(n => n.IsChecked == true && !n.Entry.IsDirectory).Select(n => n.Entry).ToList();
+        if (picked.Count == 0) { Warn(Loc.T("PickFiles")); return; }
+        var dlg = new OpenFolderDialog { Title = Loc.T("RescueSelected"), InitialDirectory = Directory.Exists(FolderBox.Text) ? FolderBox.Text : null };
+        if (dlg.ShowDialog(this) != true) return;
+        string outDir = dlg.FolderName;
+        var paths = picked.Select(f => f.FullPath).ToList();
+        var fs = _fs;
+
+        // Everything already read (e.g. an opened image)? Then just copy the files out.
+        bool needDisc = !(fs.Source is DiscImage img0 && img0.Map != null && picked.All(f => img0.Map.Summarize(f.Extent, f.SectorCount) is var t && t.Pending + t.Retry == 0));
+        if (needDisc)
+        {
+            if (_disc == null) { Warn(Loc.T("InsertDisc")); return; }
+            var ranges = picked.Select(f => (f.Extent, f.SectorCount)).Concat(fs.MetadataRanges()).ToList();
+            AddLog(Loc.T("SelectedStart", picked.Count, FormatBytes(picked.Sum(f => f.DataSize))));
+            Tabs.SelectedIndex = 0;
+            if (!await RunRescueAsync(retryBad: false, ranges)) return;
+            string? path = TargetPath();
+            if (path == null) return;
+            LoadImage(path);
+            fs = _fs!;
+            Tabs.SelectedIndex = 1;
+        }
+
+        var entries = paths.Select(p => fs.Find(p)).Where(x => x != null).Cast<IsoEntry>().ToList();
+        string target = Path.Combine(outDir, IsoFileSystem.Sanitize(string.IsNullOrWhiteSpace(fs.VolumeId) ? "Disk" : fs.VolumeId));
+        IsoFileSystem.ExtractReport? report = null;
+        await RunContentTask((p, ct) =>
+        {
+            report = fs.Extract(entries, target, p, ct);
+            return Loc.T("Extracted", report.Files, report.Damaged.Count) + "  →  " + target;
+        });
+        if (report == null) return;
+        AddLog(Loc.T("Extracted", report.Files, report.Damaged.Count) + "  →  " + target);
+        if (Directory.Exists(target)) Process.Start("explorer.exe", $"\"{target}\"");
+        if (report.Damaged.Count > 0)
+            MessageBox.Show(this, Loc.T("SelectedDamaged", string.Join("\n", report.Damaged.Select(d => $"• {d.OutputName} ({d.BadSectors})"))), "DVD 360", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     // ---- content status on the disc

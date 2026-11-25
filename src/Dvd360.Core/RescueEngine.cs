@@ -50,6 +50,8 @@ public sealed class RescueEngine
     private FileStream? _image;
     private DateTime _lastSave;
     private long _okBytesThisRun;
+    /// <summary>Sorted, merged [Start, End) ranges this run works on (whole disc by default).</summary>
+    private List<(long Start, long End)> _scope = new();
 
     public RescueEngine(ISectorDevice device, string imagePath, RescueOptions? options = null)
     {
@@ -90,14 +92,51 @@ public sealed class RescueEngine
         return new SectorMap(Info.TotalSectors, Info.SectorSize);
     }
 
-    /// <summary>Runs the fast passes and the sector-by-sector pass. Safe to cancel and call again.</summary>
-    public Task RunAsync(CancellationToken ct) => Task.Run(() => Run(retryBad: false, ct), ct);
+    /// <summary>
+    /// Runs the fast passes and the sector-by-sector pass. Safe to cancel and call again.
+    /// With <paramref name="ranges"/>, only those sectors are read (e.g. just the files the user picked).
+    /// </summary>
+    public Task RunAsync(CancellationToken ct, IEnumerable<(long Start, long Count)>? ranges = null) =>
+        Task.Run(() => Run(retryBad: false, ranges, ct), ct);
 
     /// <summary>Gives sectors that are still bad another <see cref="RescueOptions.Retries"/> tries.</summary>
-    public Task RetryBadAsync(CancellationToken ct) => Task.Run(() => Run(retryBad: true, ct), ct);
+    public Task RetryBadAsync(CancellationToken ct, IEnumerable<(long Start, long Count)>? ranges = null) =>
+        Task.Run(() => Run(retryBad: true, ranges, ct), ct);
 
-    private void Run(bool retryBad, CancellationToken ct)
+    /// <summary>Sectors still to read inside the given ranges (or the whole disc).</summary>
+    public long PendingIn(IEnumerable<(long Start, long Count)>? ranges)
     {
+        if (ranges == null) return PendingSectors;
+        long n = 0;
+        foreach (var (s, e) in Merge(ranges, Map.Count)) { var t = Map.Summarize(s, e - s); n += t.Pending + t.Retry; }
+        return n;
+    }
+
+    internal static List<(long Start, long End)> Merge(IEnumerable<(long Start, long Count)> ranges, long total)
+    {
+        var list = ranges.Where(r => r.Count > 0)
+            .Select(r => (Start: Math.Clamp(r.Start, 0, total), End: Math.Clamp(r.Start + r.Count, 0, total)))
+            .Where(r => r.End > r.Start).OrderBy(r => r.Start).ToList();
+        var merged = new List<(long Start, long End)>();
+        foreach (var r in list)
+        {
+            if (merged.Count > 0 && r.Start <= merged[^1].End) merged[^1] = (merged[^1].Start, Math.Max(merged[^1].End, r.End));
+            else merged.Add(r);
+        }
+        return merged;
+    }
+
+    private long CountInScope(SectorState state)
+    {
+        long n = 0;
+        foreach (var (s, e) in _scope)
+            for (long i = s; i < e; i++) if (Map[i] == state) n++;
+        return n;
+    }
+
+    private void Run(bool retryBad, IEnumerable<(long Start, long Count)>? ranges, CancellationToken ct)
+    {
+        _scope = ranges == null ? [(0, Map.Count)] : Merge(ranges, Map.Count);
         var clock = Stopwatch.StartNew();
         _okBytesThisRun = 0;
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(ImagePath))!);
@@ -149,22 +188,24 @@ public sealed class RescueEngine
 
     private void FastCopy(CancellationToken ct, Action tick)
     {
-        if (Map.CountOf(SectorState.Untried) == 0) return;
+        if (CountInScope(SectorState.Untried) == 0) return;
         Stats.Pass = RescuePass.FastCopy;
         Emit(CoreText.L("1. geçiş: kolay okunan her yer hızlıca kopyalanıyor", "Pass 1: fast copy of everything that reads easily"));
         int block = _device.MaxSectorsPerRead;
-        long lba = 0;
         int failures = 0, streak = 0;
         uint normalTimeout = _device.ReadTimeoutSeconds;
         _device.ReadTimeoutSeconds = Math.Min(normalTimeout, 5); // don't let the drive grind on scratches now
         try
         {
+          foreach (var (rangeStart, rangeEnd) in _scope)
+          {
+            long lba = rangeStart;
             while (true)
             {
                 ct.ThrowIfCancellationRequested();
                 lba = Map.FindNext(lba, SectorState.Untried);
-                if (lba < 0) break;
-                int n = Map.RunLength(lba, SectorState.Untried, block);
+                if (lba < 0 || lba >= rangeEnd) break;
+                int n = (int)Math.Min(Map.RunLength(lba, SectorState.Untried, block), rangeEnd - lba);
                 long started = Stopwatch.GetTimestamp();
                 ReadBlock(lba, n, out bool readError);
                 // A block that takes ages means the drive is fighting a scratch: keep what it gave us,
@@ -186,6 +227,7 @@ public sealed class RescueEngine
                 }
                 tick();
             }
+          }
         }
         finally
         {
@@ -196,37 +238,41 @@ public sealed class RescueEngine
     /// <summary>Forward over the areas pass 1 jumped over (optical drives read much faster forwards).</summary>
     private void Gaps(CancellationToken ct, Action tick)
     {
-        if (Map.CountOf(SectorState.Untried) == 0) return;
+        if (CountInScope(SectorState.Untried) == 0) return;
         Stats.Pass = RescuePass.Gaps;
         Emit(CoreText.L("2. geçiş: atlanan bölgeler okunuyor", "Pass 2: reading the areas that were jumped over"));
         int block = _device.MaxSectorsPerRead;
-        long lba = 0;
-        while (true)
+        foreach (var (rangeStart, rangeEnd) in _scope)
         {
-            ct.ThrowIfCancellationRequested();
-            lba = Map.FindNext(lba, SectorState.Untried);
-            if (lba < 0) break;
-            int n = Map.RunLength(lba, SectorState.Untried, block);
-            ReadBlock(lba, n, out _);
-            lba += n;
-            tick();
+            long lba = rangeStart;
+            while (true)
+            {
+                ct.ThrowIfCancellationRequested();
+                lba = Map.FindNext(lba, SectorState.Untried);
+                if (lba < 0 || lba >= rangeEnd) break;
+                int n = (int)Math.Min(Map.RunLength(lba, SectorState.Untried, block), rangeEnd - lba);
+                ReadBlock(lba, n, out _);
+                lba += n;
+                tick();
+            }
         }
     }
 
     private void SingleSectors(SectorState target, RescuePass pass, CancellationToken ct, Action tick)
     {
-        long total = Map.CountOf(target);
+        long total = CountInScope(target);
         if (total == 0) return;
         Stats.Pass = pass;
         Emit(pass == RescuePass.RetryBad
             ? CoreText.L($"{total:N0} bozuk sektör yeniden deneniyor, her biri {_options.Retries} kez", $"Retrying {total:N0} bad sectors, {_options.Retries} tries each")
             : CoreText.L($"3. geçiş: sektör sektör, {total:N0} sektör, her biri en çok {_options.Retries} kez", $"Pass 3: sector by sector, {total:N0} sectors, up to {_options.Retries} tries each"));
-        long lba = 0, done = 0, rescued = 0;
-        while (true)
+        long done = 0, rescued = 0;
+        foreach (var (rangeStart, rangeEnd) in _scope)
+        for (long lba = rangeStart; ; lba++)
         {
             ct.ThrowIfCancellationRequested();
             lba = Map.FindNext(lba, target);
-            if (lba < 0) break;
+            if (lba < 0 || lba >= rangeEnd) break;
             for (int attempt = 0; attempt < Math.Max(1, _options.Retries); attempt++)
             {
                 ct.ThrowIfCancellationRequested();
@@ -238,7 +284,6 @@ public sealed class RescueEngine
             if (Map[lba] == target) Map.Set(lba, SectorState.Bad);
             done++;
             if (done % 100 == 0) Emit(CoreText.L($"  {done:N0}/{total:N0} denendi, {rescued:N0} kurtarıldı", $"  {done:N0}/{total:N0} tried, {rescued:N0} rescued"));
-            lba++;
             tick();
         }
         Emit(CoreText.L($"  Bu geçişte {total:N0} sektörden {rescued:N0} tanesi kurtarıldı", $"  {rescued:N0} of {total:N0} sectors rescued in this pass"));

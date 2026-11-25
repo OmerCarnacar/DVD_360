@@ -10,6 +10,7 @@ namespace Dvd360.App;
 public abstract class Observable : INotifyPropertyChanged
 {
     public event PropertyChangedEventHandler? PropertyChanged;
+    protected void OnPropertyChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     protected void Set<T>(ref T field, T value, [CallerMemberName] string? name = null)
     {
         if (EqualityComparer<T>.Default.Equals(field, value)) return;
@@ -23,12 +24,14 @@ public sealed class FileNode : Observable
     private bool _expanded;
     private string _stateText = "";
     private Brush _stateBrush = MutedBrush;
+    private bool? _checked = false;
 
-    public FileNode(IsoEntry entry, bool knowsDamage)
+    public FileNode(IsoEntry entry, bool knowsDamage, FileNode? parent = null)
     {
         Entry = entry;
         KnowsDamage = knowsDamage;
-        foreach (var c in entry.Children) Children.Add(new FileNode(c, knowsDamage));
+        Parent = parent;
+        foreach (var c in entry.Children) Children.Add(new FileNode(c, knowsDamage, this));
         _expanded = entry.IsDirectory && entry.Parent?.Parent == null;
         Refresh(null);
     }
@@ -40,6 +43,43 @@ public sealed class FileNode : Observable
 
     public IsoEntry Entry { get; }
     public bool KnowsDamage { get; }
+    public FileNode? Parent { get; }
+
+    /// <summary>Picked for "rescue selected". Folders show a mixed state when only some of their files are picked.</summary>
+    public bool? IsChecked
+    {
+        get => _checked;
+        set
+        {
+            bool v = value ?? false; // a click on a mixed folder selects all of it
+            SetChecked(v, updateParent: true);
+        }
+    }
+
+    private void SetChecked(bool? value, bool updateParent)
+    {
+        if (_checked == value) return;
+        _checked = value;
+        OnPropertyChanged(nameof(IsChecked));
+        if (value.HasValue)
+            foreach (var c in Children) c.SetChecked(value, updateParent: false);
+        if (updateParent) Parent?.SyncFromChildren();
+    }
+
+    private void SyncFromChildren()
+    {
+        bool? state = Children.Count == 0 ? _checked
+            : Children.All(c => c._checked == true) ? true
+            : Children.All(c => c._checked == false) ? false : null;
+        if (_checked != state) { _checked = state; OnPropertyChanged(nameof(IsChecked)); }
+        Parent?.SyncFromChildren();
+    }
+
+    public IEnumerable<FileNode> SelfAndDescendants()
+    {
+        yield return this;
+        foreach (var c in Children) foreach (var d in c.SelfAndDescendants()) yield return d;
+    }
     public ObservableCollection<FileNode> Children { get; } = new();
     public string Name => Entry.IsDirectory ? Entry.Name : Entry.OutputName;
     public string Icon => Entry.IsDirectory ? "📁" : Entry.IsForm2 || MainWindow.IsVideo(Entry.Name) ? "🎬"

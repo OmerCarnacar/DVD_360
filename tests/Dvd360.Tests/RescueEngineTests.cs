@@ -178,6 +178,28 @@ public sealed class RescueEngineTests : IDisposable
     }
 
     [Fact]
+    public async Task Selected_ranges_only_read_those_sectors()
+    {
+        var dev = new FakeDevice(10_000);
+        dev.Dead.Add(5_005);
+        var engine = new RescueEngine(dev, Img, new RescueOptions { Retries = 2 });
+        (long, long)[] picked = [(5_000, 100), (9_000, 50), (5_050, 100)]; // overlapping on purpose
+        await engine.RunAsync(CancellationToken.None, picked);
+
+        Assert.Equal(150 - 1 + 50, engine.OkSectors); // 5000..5149 merged, minus the dead one, plus 9000..9049
+        Assert.Equal(1, engine.BadSectors);
+        Assert.Equal(SectorState.Untried, engine.Map[4_999]);
+        Assert.Equal(SectorState.Untried, engine.Map[5_150]);
+        Assert.Equal(SectorState.Untried, engine.Map[0]);
+        Assert.Equal(0, engine.PendingIn(picked));
+        AssertSectorIntact(File.ReadAllBytes(Img), 9_049);
+
+        // A later full rescue continues from there without re-reading the picked files.
+        await new RescueEngine(dev, Img).RunAsync(CancellationToken.None);
+        Assert.Equal(SectorState.Ok, SectorMap.Load(engine.MapPath)[0]);
+    }
+
+    [Fact]
     public void Map_from_another_disc_is_refused()
     {
         new SectorMap(10, 2048).Save(Img + ".map");

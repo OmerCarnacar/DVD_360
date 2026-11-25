@@ -134,7 +134,9 @@
                             <Button x:Name="StartButton" Style="{StaticResource Primary}" Content="{Binding [Start], Source={x:Static local:Loc.I}}" Click="Start_Click"/>
                             <Button x:Name="StopButton" Style="{StaticResource Danger}" Content="{Binding [Stop], Source={x:Static local:Loc.I}}" Click="Stop_Click" IsEnabled="False"/>
                             <Button x:Name="RetryButton" Content="{Binding [RetryBad], Source={x:Static local:Loc.I}}" Click="RetryBad_Click" IsEnabled="False"/>
+                            <Button x:Name="RescueIsoButton" Content="{Binding [SaveIso], Source={x:Static local:Loc.I}}" Click="RescueSaveIso_Click"/>
                             <Button Content="{Binding [OpenFolder], Source={x:Static local:Loc.I}}" Click="OpenFolder_Click"/>
+                            <CheckBox x:Name="AutoIsoBox" IsChecked="True" VerticalAlignment="Center" Margin="4,0,0,8" Content="{Binding [AutoIso], Source={x:Static local:Loc.I}}"/>
                         </WrapPanel>
 
                         <Border Grid.Row="2" Style="{StaticResource CardBox}">
@@ -176,8 +178,11 @@
                             </StackPanel>
                         </DockPanel>
                         <WrapPanel Grid.Row="1">
+                            <Button x:Name="RescueSelectedButton" Style="{StaticResource Primary}" Content="{Binding [RescueSelected], Source={x:Static local:Loc.I}}" Click="RescueSelected_Click"/>
+                            <Button Content="{Binding [SelectAll], Source={x:Static local:Loc.I}}" Click="SelectAll_Click"/>
+                            <Button Content="{Binding [SelectNone], Source={x:Static local:Loc.I}}" Click="SelectNone_Click"/>
                             <Button x:Name="ExtractButton" Content="{Binding [Extract], Source={x:Static local:Loc.I}}" Click="Extract_Click"/>
-                            <Button x:Name="IsoButton" Style="{StaticResource Primary}" Content="{Binding [SaveIso], Source={x:Static local:Loc.I}}" Click="SaveIso_Click"/>
+                            <Button x:Name="IsoButton" Content="{Binding [SaveIso], Source={x:Static local:Loc.I}}" Click="SaveIso_Click"/>
                             <Button x:Name="MountButton" Content="{Binding [Mount], Source={x:Static local:Loc.I}}" Click="Mount_Click"/>
                             <Button x:Name="UnmountButton" Content="{Binding [Unmount], Source={x:Static local:Loc.I}}" Click="Unmount_Click" IsEnabled="False"/>
                         </WrapPanel>
@@ -188,14 +193,16 @@
                                         <Grid Margin="0,2">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="26"/>
+                                                <ColumnDefinition Width="26"/>
                                                 <ColumnDefinition Width="360"/>
                                                 <ColumnDefinition Width="110"/>
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Text="{Binding Icon}" FontFamily="Segoe UI Emoji"/>
-                                            <TextBlock Grid.Column="1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
-                                            <TextBlock Grid.Column="2" Text="{Binding SizeText}" Style="{StaticResource Muted}" TextAlignment="Right" Margin="0,0,16,0"/>
-                                            <TextBlock Grid.Column="3" Text="{Binding StateText}" Foreground="{Binding StateBrush}" FontSize="12"/>
+                                            <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}" IsThreeState="False" VerticalAlignment="Center" Margin="0"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding Icon}" FontFamily="Segoe UI Emoji"/>
+                                            <TextBlock Grid.Column="2" Text="{Binding Name}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
+                                            <TextBlock Grid.Column="3" Text="{Binding SizeText}" Style="{StaticResource Muted}" TextAlignment="Right" Margin="0,0,16,0"/>
+                                            <TextBlock Grid.Column="4" Text="{Binding StateText}" Foreground="{Binding StateBrush}" FontSize="12"/>
                                         </Grid>
                                     </HierarchicalDataTemplate>
                                 </TreeView.ItemTemplate>
