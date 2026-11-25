@@ -49,7 +49,8 @@ internal sealed class FakeDevice : ISectorDevice
         return ReadOutcome.Ok;
     }
 
-    public bool SetReadSpeed(int multiplier) => true;
+    public List<int> SpeedRequests { get; } = new();
+    public bool SetReadSpeed(int multiplier) { SpeedRequests.Add(multiplier); return true; }
     public void Dispose() { }
 }
 
@@ -199,6 +200,22 @@ public sealed class RescueEngineTests : IDisposable
         // A later full rescue continues from there without re-reading the picked files.
         await new RescueEngine(dev, Img).RunAsync(CancellationToken.None);
         Assert.Equal(SectorState.Ok, SectorMap.Load(engine.MapPath)[0]);
+    }
+
+    [Fact]
+    public async Task Drive_is_slowed_down_when_most_reads_fail()
+    {
+        var dev = new FakeDevice(20_000);
+        for (long l = 1_000; l < 9_000; l += 3) dev.Dead.Add(l); // a long, badly scratched stretch
+        var engine = new RescueEngine(dev, Img, new RescueOptions { Retries = 1 });
+        await engine.RunAsync(CancellationToken.None);
+        Assert.True(engine.SlowedDown);
+        Assert.Contains(4, dev.SpeedRequests);
+
+        var clean = new FakeDevice(5_000);
+        var e2 = new RescueEngine(clean, Path.Combine(_dir, "clean.iso"));
+        await e2.RunAsync(CancellationToken.None);
+        Assert.False(e2.SlowedDown);
     }
 
     [Fact]

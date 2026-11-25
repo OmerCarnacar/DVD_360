@@ -418,7 +418,8 @@ public partial class MainWindow : Window
             _engine = new RescueEngine(dev, path, new RescueOptions
             {
                 Retries = (int)RetrySlider.Value,
-                SpeedMultiplier = int.Parse((string)((ComboBoxItem)SpeedBox.SelectedItem).Tag),
+                SpeedMultiplier = (string)((ComboBoxItem)SpeedBox.SelectedItem).Tag is "auto" ? 0 : int.Parse((string)((ComboBoxItem)SpeedBox.SelectedItem).Tag),
+                AutoSlowDown = (string)((ComboBoxItem)SpeedBox.SelectedItem).Tag is "auto",
                 VerifyCdSectors = VerifyBox.IsChecked == true,
             });
         }

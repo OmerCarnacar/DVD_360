@@ -12,7 +12,7 @@ DVD 360 — CD/DVD rescue (command line)
 
   dvd360 drives                         list optical drives
   dvd360 info <E>                       show disc information
-  dvd360 rescue <E> <image> [--retries N] [--speed X]
+  dvd360 rescue <E> <image> [--retries N] [--speed auto|X]
                                         rescue the disc sector by sector into <image> (.bin for CD, .iso for DVD).
                                         Run again to continue; add --retry-bad to retry bad sectors
   dvd360 list <image>                   list files in a rescued image
@@ -53,7 +53,8 @@ try
             var engine = new RescueEngine(dev, args[2], new RescueOptions
             {
                 Retries = int.Parse(Opt("--retries", "5")),
-                SpeedMultiplier = int.Parse(Opt("--speed", "0")),
+                SpeedMultiplier = Opt("--speed", "auto") is "auto" ? 0 : int.Parse(Opt("--speed", "auto")),
+                AutoSlowDown = Opt("--speed", "auto") is "auto",
             });
             engine.Log += m => Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {m}");
             if (engine.IsResume) Console.WriteLine("Continuing a previous rescue.");

@@ -11,6 +11,12 @@ public sealed class RescueOptions
     public int SpeedMultiplier { get; set; }
     /// <summary>In the fast pass, a block slower than this counts as a damaged area to come back to later.</summary>
     public double SlowReadSeconds { get; set; } = 1.0;
+    /// <summary>
+    /// Drop to <see cref="SlowSpeedMultiplier"/> when most recent reads fail. On a badly scratched Video CD this
+    /// read ten times more sectors per minute than full speed.
+    /// </summary>
+    public bool AutoSlowDown { get; set; } = true;
+    public int SlowSpeedMultiplier { get; set; } = 4;
     /// <summary>Check header address and EDC of every CD data sector ourselves.</summary>
     public bool VerifyCdSectors { get; set; } = true;
 }
@@ -50,6 +56,8 @@ public sealed class RescueEngine
     private FileStream? _image;
     private DateTime _lastSave;
     private long _okBytesThisRun;
+    private readonly Queue<bool> _recentErrors = new();
+    private bool _slowedDown;
     /// <summary>Sorted, merged [Start, End) ranges this run works on (whole disc by default).</summary>
     private List<(long Start, long End)> _scope = new();
 
@@ -70,6 +78,8 @@ public sealed class RescueEngine
     public SectorMap Map { get; }
     public RescueStats Stats { get; } = new();
     public bool IsResume { get; private set; }
+    /// <summary>True once the engine lowered the read speed by itself.</summary>
+    public bool SlowedDown => _slowedDown;
 
     public event Action<string>? Log;
 
@@ -211,6 +221,7 @@ public sealed class RescueEngine
                 // A block that takes ages means the drive is fighting a scratch: keep what it gave us,
                 // but treat the area as damaged and move on (like ddrescue's minimum read rate).
                 if (Stopwatch.GetElapsedTime(started).TotalSeconds > _options.SlowReadSeconds) readError = true;
+                NoteResult(readError);
                 lba += n;
                 // Only real read errors mean a damaged area worth jumping over. A sector that reads but fails
                 // our EDC check (common on Video CDs, whose Form 2 sectors have no error correction) does not.
@@ -251,7 +262,8 @@ public sealed class RescueEngine
                 lba = Map.FindNext(lba, SectorState.Untried);
                 if (lba < 0 || lba >= rangeEnd) break;
                 int n = (int)Math.Min(Map.RunLength(lba, SectorState.Untried, block), rangeEnd - lba);
-                ReadBlock(lba, n, out _);
+                ReadBlock(lba, n, out bool gapError);
+                NoteResult(gapError);
                 lba += n;
                 tick();
             }
@@ -287,6 +299,22 @@ public sealed class RescueEngine
             tick();
         }
         Emit(CoreText.L($"  Bu geçişte {total:N0} sektörden {rescued:N0} tanesi kurtarıldı", $"  {rescued:N0} of {total:N0} sectors rescued in this pass"));
+    }
+
+    /// <summary>Watches the last 20 block reads and slows the drive down when most of them fail.</summary>
+    private void NoteResult(bool error)
+    {
+        _recentErrors.Enqueue(error);
+        if (_recentErrors.Count > 20) _recentErrors.Dequeue();
+        if (!_options.AutoSlowDown || _slowedDown || _recentErrors.Count < 20) return;
+        if (_options.SpeedMultiplier is > 0 and <= 4) return; // already slow
+        if (_recentErrors.Count(e => e) < 10) return;
+        if (_device.SetReadSpeed(_options.SlowSpeedMultiplier))
+        {
+            _slowedDown = true;
+            Emit(CoreText.L($"Çok hata var: okuma hızı {_options.SlowSpeedMultiplier}x'e düşürüldü (çizikli disk yavaşta daha iyi okunur).",
+                            $"Many errors: read speed lowered to {_options.SlowSpeedMultiplier}x (scratched discs read better slowly)."));
+        }
     }
 
     /// <summary>Reads, verifies and stores a run of sectors. Returns true if all of them are now good.</summary>

@@ -124,7 +124,8 @@
                                     </StackPanel>
                                     <StackPanel Margin="0,0,24,0">
                                         <TextBlock Style="{StaticResource Muted}" Text="{Binding [Speed], Source={x:Static local:Loc.I}}"/>
-                                        <ComboBox x:Name="SpeedBox" SelectedIndex="0">
+                                        <ComboBox x:Name="SpeedBox" SelectedIndex="0" MinWidth="190">
+                                            <ComboBoxItem Content="{Binding [SpeedAuto], Source={x:Static local:Loc.I}}" Tag="auto"/>
                                             <ComboBoxItem Content="{Binding [SpeedMax], Source={x:Static local:Loc.I}}" Tag="0"/>
                                             <ComboBoxItem Content="16x" Tag="16"/>
                                             <ComboBoxItem Content="8x" Tag="8"/>
