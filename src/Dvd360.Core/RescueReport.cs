@@ -45,7 +45,7 @@ td.n{text-align:right;white-space:nowrap}.legend span{margin-right:16px}.dot{dis
 <div><div class="muted">{{L("Doluluk", "Filled")}}</div><div class="big ok">{{P(fill)}}</div></div>
 <div><div class="muted">{{L("Hatalı alan", "Error area")}}</div><div class="big err">{{P(err)}}</div></div>
 <div><div class="muted">{{L("Okunmamış", "Unread")}}</div><div class="big">{{P(rest)}}</div></div>
-<div><div class="muted">{{L("Disk", "Disc")}}</div><div>{{H(info.MediaType)}} · {{H(info.VolumeLabel)}}<br><span class="muted">{{total:N0}} {{L("sektör", "sectors")}}</span></div></div>
+<div><div class="muted">{{L("Disk", "Disc")}}</div><div>{{H(info.MediaType)}} · {{H(info.VolumeLabel)}}<br><span class="muted">{{total:N0}} {{L("sektör", "sectors")}}{{(fs?.VolumeCreated is { } vc ? " · " + L("yazıldı ", "written ") + vc.ToString("dd.MM.yyyy HH:mm") + " (" + CoreText.Age(vc) + ")" : "")}}</span></div></div>
 </div>
 <div class="bar"><div style="width:{{fill.ToString(System.Globalization.CultureInfo.InvariantCulture)}}%;background:var(--ok)"></div><div style="width:{{err.ToString(System.Globalization.CultureInfo.InvariantCulture)}}%;background:var(--err)"></div></div>
 <h2>{{L("Disk haritası", "Disc map")}}</h2>
@@ -93,11 +93,11 @@ td.n{text-align:right;white-space:nowrap}.legend span{margin-right:16px}.dot{dis
                 if (errors + t.Pending > 0) damaged++;
                 string state = errors + t.Pending == 0 ? $"<span class=\"ok\">{L("Sağlam", "Intact")}</span>"
                     : errors > 0 ? $"<span class=\"err\">{errors:N0} {L("hatalı", "errors")}</span>" : L("eksik", "incomplete");
-                rows.Append($"<tr><td>{H(f.FullPath.Replace(f.Name, f.OutputName))}</td><td class=\"n\">{SizeText(f.DataSize)}</td><td class=\"n\">{P(f.SectorCount == 0 ? 100 : 100.0 * t.Ok / n)}</td><td>{state}</td></tr>");
+                rows.Append($"<tr><td>{H(f.FullPath.Replace(f.Name, f.OutputName))}</td><td class=\"n\">{SizeText(f.DataSize)}</td><td class=\"n\">{(f.Modified is { } m ? m.ToString("dd.MM.yyyy HH:mm") : "")}</td><td class=\"n\">{P(f.SectorCount == 0 ? 100 : 100.0 * t.Ok / n)}</td><td>{state}</td></tr>");
             }
             sb.Append($"""
 <h2>{L("Dosyalar", "Files")} <span class="muted">({files.Count:N0}, {L("sorunlu", "with problems")}: {damaged:N0})</span></h2>
-<div class="card"><table><tr><th>{L("Dosya", "File")}</th><th class="n">{L("Boyut", "Size")}</th><th class="n">{L("Dolu", "Filled")}</th><th>{L("Durum", "State")}</th></tr>
+<div class="card"><table><tr><th>{L("Dosya", "File")}</th><th class="n">{L("Boyut", "Size")}</th><th class="n">{L("Yazılma", "Written")}</th><th class="n">{L("Dolu", "Filled")}</th><th>{L("Durum", "State")}</th></tr>
 {rows}</table></div>
 """);
         }

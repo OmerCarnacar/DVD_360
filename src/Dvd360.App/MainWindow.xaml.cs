@@ -41,7 +41,7 @@ public partial class MainWindow : Window
     private string _fileFilter = "all";
 
     /// <summary>The file picked in whichever view is showing (card list or folder tree).</summary>
-    private FileNode? SelectedNode => (ViewTree.IsChecked == true ? FileTree.SelectedItem : FileList.SelectedItem) as FileNode;
+    private FileNode? SelectedNode => (ViewTree.IsChecked == true ? FileTree.SelectedItem : ViewGrid.IsChecked == true ? FileGrid.SelectedItem : FileList.SelectedItem) as FileNode;
     private SectorMap? _previewMap;           // map of an earlier rescue of the inserted disc
     private List<IsoEntry> _filesByExtent = new();
     private int _treeTick;
@@ -237,7 +237,7 @@ public partial class MainWindow : Window
         Disc.SetMode(DiscViewMode.Empty, Loc.T("InsertDisc"));
         DiscStatus.Text = Loc.T("InsertDisc");
         DiscStatus.Foreground = (System.Windows.Media.Brush)FindResource("MutedBrush");
-        InfoMedia.Text = InfoLabel.Text = InfoSize.Text = InfoTracks.Text = InfoDrive.Text = "";
+        InfoMedia.Text = InfoLabel.Text = InfoSize.Text = InfoTracks.Text = InfoDrive.Text = InfoWritten.Text = InfoAge.Text = "";
         UpdateTarget();
     }
 
@@ -707,6 +707,7 @@ public partial class MainWindow : Window
             return;
         }
         ContentEmpty.Visibility = Visibility.Collapsed;
+        ShowWritten(fs);
         var root = new FileNode(fs.Root, fs.Source.KnowsDamage);
         _rootNode = root;
         foreach (var n in root.SelfAndDescendants())
@@ -719,6 +720,7 @@ public partial class MainWindow : Window
         _fileView = System.Windows.Data.CollectionViewSource.GetDefaultView(flat);
         _fileView.Filter = FileFilter;
         FileList.ItemsSource = _fileView;
+        SortBox_SelectionChanged(SortBox, null!);
         UpdateContentStats();
         var files = fs.Files.ToList();
         int dirs = fs.Root.Descendants().Count(d => d.IsDirectory);
@@ -1083,6 +1085,38 @@ public partial class MainWindow : Window
         if (SelectedNode is FileNode n) ShowFileInfo(n);
     }
 
+    /// <summary>Disc burn date (from the volume descriptor, else the newest file) and how long ago that was.</summary>
+    private void ShowWritten(IsoFileSystem? fs)
+    {
+        DateTime? when = fs?.VolumeCreated ?? fs?.Files.Where(f => f.Modified != null).Select(f => f.Modified).Max();
+        // the drive panel describes the inserted disc: only its own contents may set its date
+        bool ofInsertedDisc = fs?.Source is LiveDiscSource || (fs?.Source is DiscImage img && _disc != null && img.Info.TotalSectors == _disc.TotalSectors);
+        if (ofInsertedDisc)
+        {
+            InfoWritten.Text = when is { } w ? w.ToString("dd.MM.yyyy HH:mm") : "—";
+            InfoAge.Text = when is { } a ? CoreText.Age(a) : "";
+        }
+        if (when != null) ContentSummary.Text += "  •  " + Loc.T("WrittenOn", when.Value.ToString("dd.MM.yyyy"), CoreText.Age(when.Value));
+    }
+
+    private void SortBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_fileView == null) return;
+        using (_fileView.DeferRefresh())
+        {
+            _fileView.SortDescriptions.Clear();
+            var sd = SortBox.SelectedIndex switch
+            {
+                1 => new System.ComponentModel.SortDescription(nameof(FileNode.SortDate), System.ComponentModel.ListSortDirection.Descending),
+                2 => new System.ComponentModel.SortDescription(nameof(FileNode.SortDate), System.ComponentModel.ListSortDirection.Ascending),
+                3 => new System.ComponentModel.SortDescription(nameof(FileNode.SortSize), System.ComponentModel.ListSortDirection.Descending),
+                4 => new System.ComponentModel.SortDescription(nameof(FileNode.SortState), System.ComponentModel.ListSortDirection.Ascending),
+                _ => (System.ComponentModel.SortDescription?)null,
+            };
+            if (sd is { } d) _fileView.SortDescriptions.Add(d);
+        }
+    }
+
     // ---- modern contents view: stats, filters, search, list / tree
 
     private bool FileFilter(object o)
@@ -1129,22 +1163,27 @@ public partial class MainWindow : Window
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         SearchHint.Visibility = SearchBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
-        if (ViewTree.IsChecked == true && SearchBox.Text.Length > 0) ViewList.IsChecked = true; // search shows the list
+        if (ViewTree.IsChecked == true && SearchBox.Text.Length > 0) ViewList.IsChecked = true; // search shows the list (or cards)
         _fileView?.Refresh();
     }
 
     private void View_Changed(object sender, RoutedEventArgs e)
     {
         if (!IsLoaded) return;
-        bool tree = ViewTree.IsChecked == true;
+        bool tree = ViewTree.IsChecked == true, grid = ViewGrid.IsChecked == true;
         FileTree.Visibility = tree ? Visibility.Visible : Visibility.Collapsed;
-        FileList.Visibility = tree ? Visibility.Collapsed : Visibility.Visible;
+        FileGrid.Visibility = grid ? Visibility.Visible : Visibility.Collapsed;
+        FileList.Visibility = !tree && !grid ? Visibility.Visible : Visibility.Collapsed;
         FilterChips.IsEnabled = !tree;
+        // keep the same file selected when switching views
+        var current = (FileList.SelectedItem ?? FileGrid.SelectedItem) as FileNode;
+        if (grid && current != null) FileGrid.SelectedItem = current;
+        if (!grid && !tree && current != null) FileList.SelectedItem = current;
     }
 
     private void FileList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (FileList.SelectedItem is FileNode n) { Disc.SetHighlight(n.Ranges()); ShowFileInfo(n); }
+        if ((sender as ListBox)?.SelectedItem is FileNode n) { Disc.SetHighlight(n.Ranges()); ShowFileInfo(n); }
         else { Disc.SetHighlight([]); FileInfoCard.Visibility = Visibility.Collapsed; }
     }
 
@@ -1165,12 +1204,54 @@ public partial class MainWindow : Window
     private void ShowFileInfo(FileNode n)
     {
         FileInfoCard.Visibility = Visibility.Visible;
-        FileInfoName.Inlines.Clear();
-        FileInfoName.Inlines.Add(new System.Windows.Documents.Run(n.Glyph) { FontFamily = (System.Windows.Media.FontFamily)FindResource("Icons"), Foreground = n.TileFore });
-        FileInfoName.Inlines.Add(new System.Windows.Documents.Run("   " + (n.Entry.IsDirectory ? n.Entry.FullPath : n.Name)));
-        string where = n.Entry.SectorCount > 0 && !n.Entry.IsDirectory ? $"  •  LBA {n.Entry.Extent:N0}–{n.Entry.Extent + n.Entry.SectorCount - 1:N0}" : "";
-        FileInfoState.Text = (n.StateText.Length > 0 ? n.StateText : Loc.T("StateUnknown")) + where;
+        var e = n.Entry;
+        FileInfoName.Text = e.IsDirectory ? (e.FullPath.Length > 0 ? e.FullPath : "\\") : n.Name;
+        FileInfoState.Text = n.StateText.Length > 0 ? n.StateText : Loc.T("StateUnknown");
         FileInfoState.Foreground = n.StateBrush;
+        DetailGlyph.Text = n.Glyph; DetailGlyph.Foreground = n.TileFore; DetailTile.Background = n.TileBrush;
+        DetailChipText.Text = n.ChipText; DetailChipText.Foreground = n.ChipFore; DetailChip.Background = n.ChipBack;
+
+        var t = n.Totals;
+        long total = Math.Max(1, t.Ok + t.Bad + t.Retry + t.Pending);
+        DetOk.Width = new GridLength(t.Ok, GridUnitType.Star);
+        DetErr.Width = new GridLength(t.Bad + t.Retry, GridUnitType.Star);
+        DetRest.Width = new GridLength(t.Pending + (t.Ok + t.Bad + t.Retry + t.Pending == 0 ? 1 : 0), GridUnitType.Star);
+
+        var rows = new List<(string Key, string Value, System.Windows.Media.Brush? Color)>();
+        string Pct(long v) => Loc.T("Pct", 100.0 * v / total);
+        rows.Add((Loc.T("DetType"), Loc.T("Cat_" + n.Category) + (e.IsForm2 ? " (Mode 2 Form 2)" : e.AudioTrack > 0 ? " (CD-DA)" : ""), null));
+        if (!e.IsDirectory) rows.Add((Loc.T("DetFolder"), e.AudioTrack > 0 ? e.Parent!.Name : e.Parent?.Parent == null ? "\\" : "\\" + e.Parent.FullPath, null));
+        long bytes = e.IsDirectory ? e.Descendants().Where(x => !x.IsDirectory).Sum(x => x.DataSize) : e.DataSize;
+        rows.Add((Loc.T("Size"), $"{FormatBytes(bytes)}  ({bytes:N0} B)", null));
+        if (e.IsDirectory) rows.Add((Loc.T("DetFiles"), $"{e.Descendants().Count(x => !x.IsDirectory):N0}", null));
+        if (e.AudioTrack > 0) rows.Add((Loc.T("DetLength"), TimeSpan.FromSeconds(e.SectorCount / 75.0).ToString(@"m\:ss"), null));
+        if (e.Modified is { } m)
+        {
+            rows.Add((Loc.T("Written"), m.ToString("dd MMMM yyyy, dddd  HH:mm:ss", System.Globalization.CultureInfo.CurrentUICulture), null));
+            rows.Add((Loc.T("DetAge"), CoreText.Age(m), null));
+        }
+        if (!e.IsDirectory && e.SectorCount > 0)
+            rows.Add((Loc.T("DetSectors"), $"{e.SectorCount:N0}  (LBA {e.Extent:N0} – {e.Extent + e.SectorCount - 1:N0})", null));
+        if (n.PctText.Length > 0)
+        {
+            rows.Add((Loc.T("StatOk"), $"{Pct(t.Ok)}  ({t.Ok:N0})", (System.Windows.Media.Brush)FindResource("OkBrush")));
+            rows.Add((Loc.T("StatBad"), $"{Pct(t.Bad + t.Retry)}  ({t.Bad + t.Retry:N0})", t.Bad + t.Retry > 0 ? (System.Windows.Media.Brush)FindResource("RetryBrush") : null));
+            if (t.Bad > 0) rows.Add((Loc.T("LegendBad"), $"{t.Bad:N0}", (System.Windows.Media.Brush)FindResource("DeadBrush")));
+            if (t.Pending > 0) rows.Add((Loc.T("StatPending"), $"{Pct(t.Pending)}  ({t.Pending:N0})", null));
+        }
+
+        DetailsGrid.Children.Clear();
+        DetailsGrid.RowDefinitions.Clear();
+        for (int i = 0; i < rows.Count; i++)
+        {
+            DetailsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var k = new TextBlock { Text = rows[i].Key, Style = (Style)FindResource("Muted"), Margin = new Thickness(0, 2, 8, 2) };
+            var v = new TextBlock { Text = rows[i].Value, Margin = new Thickness(0, 2, 0, 2), TextWrapping = TextWrapping.Wrap, FontSize = 12.5 };
+            if (rows[i].Color is { } c) { v.Foreground = c; v.FontWeight = FontWeights.SemiBold; }
+            Grid.SetRow(k, i); Grid.SetRow(v, i); Grid.SetColumn(v, 1);
+            DetailsGrid.Children.Add(k);
+            DetailsGrid.Children.Add(v);
+        }
     }
 
     private IsoEntry? FileAt(long lba)

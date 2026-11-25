@@ -98,6 +98,14 @@ public sealed class FileNode : Observable
     public string ChipText { get => _chipText; private set => Set(ref _chipText, value); }
     public Brush ChipBack { get => _chipBack; private set => Set(ref _chipBack, value); }
     public Brush ChipFore { get => _chipFore; private set => Set(ref _chipFore, value); }
+    /// <summary>Write date and time as recorded on the disc ("" for audio tracks and made-up folders).</summary>
+    public string PctShort => PctText.Split('•')[0].Trim();
+    public string DateText => Entry.Modified is { } m ? m.ToString("dd.MM.yyyy HH:mm") : "";
+    public string AgeText => Entry.Modified is { } m ? CoreText.Age(m) : "";
+    public DateTime SortDate => Entry.Modified ?? DateTime.MinValue;
+    public long SortSize => Entry.DataSize;
+    public int SortState => HasProblem ? 0 : 1;
+
     /// <summary>True when the file has errors or unread parts.</summary>
     public bool HasProblem { get; private set; }
     public FileNode? Parent { get; }

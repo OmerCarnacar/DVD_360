@@ -38,7 +38,8 @@ public partial class PreviewWindow : Window
         _live = live;
         Title = "DVD 360 — " + node.Name;
         HeaderName.Text = node.Name;
-        HeaderInfo.Text = $"{node.FolderText}   •   {node.SizeText}" + (node.PctText.Length > 0 ? "   •   " + node.PctText : "");
+        HeaderInfo.Text = $"{node.FolderText}   •   {node.SizeText}" + (node.PctText.Length > 0 ? "   •   " + node.PctText : "")
+            + (node.DateText.Length > 0 ? "   •   " + Loc.T("WrittenOn", node.DateText, node.AgeText) : "");
         HeaderGlyph.Text = node.Glyph;
         HeaderGlyph.Foreground = node.TileFore;
         HeaderTile.Background = node.TileBrush;

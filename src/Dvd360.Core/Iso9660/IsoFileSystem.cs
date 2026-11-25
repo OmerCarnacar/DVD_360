@@ -61,6 +61,8 @@ public sealed class IsoFileSystem
     public bool IsJoliet { get; }
     /// <summary>Volume size in 2048-byte blocks from the primary volume descriptor.</summary>
     public long VolumeSpaceSize { get; private init; }
+    /// <summary>When the disc (this session) was written, from the primary volume descriptor, in local time.</summary>
+    public DateTime? VolumeCreated { get; private init; }
     public ISectorSource Source => _image;
     public List<string> Warnings { get; } = new();
     /// <summary>First volume descriptor sector (session start + 16).</summary>
@@ -125,6 +127,7 @@ public sealed class IsoFileSystem
         {
             long? pvdRoot = null, pvdSize = null, jRoot = null, jSize = null;
             long volumeSpace = 0;
+            DateTime? created = null;
             string volume = "";
             bool any = false;
             for (long lba = start + 16; lba < start + 16 + 64 && lba < image.SectorCount; lba++)
@@ -140,6 +143,7 @@ public sealed class IsoFileSystem
                 {
                     pvdRoot = Le32(buf, 156 + 2); pvdSize = Le32(buf, 156 + 10);
                     volumeSpace = Le32(buf, 80);
+                    created = Date17(buf, 813);
                     volume = Encoding.ASCII.GetString(buf, 40, 32).Trim();
                 }
                 else if (type == 2 && buf[88] == '%' && buf[89] == '/' && buf[90] is (byte)'@' or (byte)'C' or (byte)'E')
@@ -152,7 +156,7 @@ public sealed class IsoFileSystem
             if (pvdRoot == null && jRoot == null) continue;
             bool joliet = jRoot != null;
             var root = new IsoEntry { Name = "", IsDirectory = true, Extent = joliet ? jRoot!.Value : pvdRoot!.Value, RecordedSize = joliet ? jSize!.Value : pvdSize!.Value };
-            var fs = new IsoFileSystem(image, root, volume, joliet) { VolumeSpaceSize = volumeSpace, DescriptorLba = start + 16 };
+            var fs = new IsoFileSystem(image, root, volume, joliet) { VolumeSpaceSize = volumeSpace, DescriptorLba = start + 16, VolumeCreated = created };
             fs.ReadTree(root);
             if (joliet && pvdRoot != null) fs.CopyXaFlagsFromIsoTree(pvdRoot.Value, pvdSize!.Value);
             foreach (var f in fs.Files) fs.FinishFile(f);
@@ -261,15 +265,38 @@ public sealed class IsoFileSystem
         }
     }
 
-    private static DateTime? Date(byte[] b, int o)
+    /// <summary>
+    /// Directory record date (7 bytes): the writer's local time plus its offset from GMT in 15-minute steps.
+    /// Shown in this PC's local time, the way Windows Explorer shows it.
+    /// </summary>
+    internal static DateTime? Date(byte[] b, int o)
     {
         try
         {
-            if (b[o] == 0) return null;
-            var local = new DateTime(1900 + b[o], b[o + 1], b[o + 2], b[o + 3], b[o + 4], b[o + 5], DateTimeKind.Unspecified);
-            return local;
+            if (b[o] == 0 || b[o + 1] is 0 or > 12 || b[o + 2] is 0 or > 31) return null;
+            var written = new DateTime(1900 + b[o], b[o + 1], b[o + 2], b[o + 3], b[o + 4], b[o + 5], DateTimeKind.Unspecified);
+            return ToLocal(written, (sbyte)b[o + 6]);
         }
         catch { return null; }
+    }
+
+    /// <summary>Volume descriptor date: "YYYYMMDDHHMMSScc" in ASCII plus the GMT offset byte.</summary>
+    internal static DateTime? Date17(byte[] b, int o)
+    {
+        try
+        {
+            string t = Encoding.ASCII.GetString(b, o, 14);
+            if (!long.TryParse(t, out _) || t.StartsWith("0000")) return null;
+            var written = DateTime.ParseExact(t, "yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+            return ToLocal(written, (sbyte)b[o + 16]);
+        }
+        catch { return null; }
+    }
+
+    private static DateTime ToLocal(DateTime written, sbyte quarterHours)
+    {
+        if (quarterHours is < -48 or > 52) return written; // invalid offset: keep as written
+        return new DateTimeOffset(written, TimeSpan.FromMinutes(quarterHours * 15)).LocalDateTime;
     }
 
     private static long Le32(byte[] b, int o) => (uint)(b[o] | b[o + 1] << 8 | b[o + 2] << 16 | b[o + 3] << 24);
