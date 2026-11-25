@@ -111,10 +111,19 @@ public static partial class VideoConverter
             "-hide_banner", "-y", "-nostdin",
             // tolerate the damage that bad sectors leave in the stream
             "-fflags", "+genpts+discardcorrupt", "-err_detect", "ignore_err",
-            "-i", job.Input,
-            "-map", "0:v:0", "-map", "0:a?",
-            "-vf", BuildFilter(job.Quality),
+            // a rescued file may start with unread (zeroed) sectors: look far ahead for the first real packets
+            "-probesize", "200M", "-analyzeduration", "200M",
         };
+        // VCD/DVD video is an MPEG program stream; say so, because the zeroed start defeats format detection
+        if (Path.GetExtension(job.Input).ToLowerInvariant() is ".mpg" or ".mpeg" or ".dat" or ".vob")
+            a.AddRange(["-f", "mpeg"]);
+        a.AddRange(
+        [
+            "-i", job.Input,
+            // only the first video and audio track: damaged sectors can look like extra bogus streams
+            "-map", "0:v:0", "-map", "0:a:0?",
+            "-vf", BuildFilter(job.Quality),
+        ]);
         if (job.UseHevc) a.AddRange(["-c:v", "libx265", "-preset", "slow", "-crf", "20", "-tag:v", "hvc1"]);
         else a.AddRange(["-c:v", "libx264", "-preset", "slow", "-crf", "18", "-profile:v", "high"]);
         a.AddRange(["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", "-progress", "pipe:1", "-nostats", job.Output]);

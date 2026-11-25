@@ -333,3 +333,25 @@ public sealed class IsoBuilderTests : IDisposable
         Assert.Equal(0, a.BadSectors);
     }
 }
+
+public sealed class VideoConverterTests
+{
+    [Fact]
+    public void Rescued_mpeg_is_read_as_program_stream_with_one_audio_track()
+    {
+        var args = Dvd360.Core.Video.VideoConverter.BuildArguments(new Dvd360.Core.Video.VideoJob { Input = @"C:\x\AVSEQ02.mpg", Output = @"C:\x\a.mp4" }).ToList();
+        int input = args.IndexOf("-i");
+        int format = args.IndexOf("-f");
+        Assert.True(format >= 0 && format < input && args[format + 1] == "mpeg", "MPEG input must force the format before -i");
+        Assert.Contains("200M", args);
+        Assert.Contains("0:a:0?", args);
+        Assert.DoesNotContain("0:a?", args);
+    }
+
+    [Fact]
+    public void Mp4_input_is_left_to_autodetect()
+    {
+        var args = Dvd360.Core.Video.VideoConverter.BuildArguments(new Dvd360.Core.Video.VideoJob { Input = @"C:\x\clip.mp4", Output = @"C:\x\b.mp4" }).ToList();
+        Assert.True(args.IndexOf("-f") < 0 || args.IndexOf("-f") > args.IndexOf("-i"));
+    }
+}
