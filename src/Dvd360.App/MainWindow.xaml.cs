@@ -262,7 +262,7 @@ public partial class MainWindow : Window
         if (_engine != null) return;
         string? path = TargetPath();
         bool resume = path != null && File.Exists(path) && File.Exists(path + ".map");
-        StartButton.Content = Loc.T(resume ? "Continue" : "Start");
+        StartButton.Content = ModeSelected.IsChecked == true ? Loc.T("RescueSelected") : Loc.T(resume ? "Continue" : "Start");
         RetryButton.IsEnabled = false;
         SpaceText.Text = "";
         if (path == null) return;
@@ -302,7 +302,82 @@ public partial class MainWindow : Window
         if (dlg.ShowDialog(this) == true) FolderBox.Text = dlg.FolderName;
     }
 
-    private void Start_Click(object sender, RoutedEventArgs e) => _ = RunRescueAsync(retryBad: false);
+    private void Start_Click(object sender, RoutedEventArgs e)
+    {
+        if (ModeSelected.IsChecked == true) RescueSelected_Click(sender, e);
+        else _ = RunRescueAsync(retryBad: false);
+    }
+
+    // ---- whole disc vs. picked files/folders
+
+    private List<IsoEntry> PickedFiles() =>
+        _rootNode?.SelfAndDescendants().Where(n => n.IsChecked == true && !n.Entry.IsDirectory).Select(n => n.Entry).ToList() ?? [];
+
+    private void UpdateSelectionText()
+    {
+        var picked = PickedFiles();
+        SelectionText.Text = picked.Count == 0 ? (ModeSelected.IsChecked == true ? Loc.T("NothingPicked") : "")
+            : Loc.T("PickedCount", picked.Count, FormatBytes(picked.Sum(f => f.DataSize)));
+        if (ModeSelected.IsChecked == true && picked.Count > 0) Disc.SetHighlight(picked.Select(f => (f.Extent, f.SectorCount)));
+    }
+
+    private void Mode_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!IsLoaded) return;
+        StartButton.Content = ModeSelected.IsChecked == true ? Loc.T("RescueSelected") : Loc.T(StartButton.Content as string == Loc.T("Continue") ? "Continue" : "Start");
+        if (ModeWhole.IsChecked == true) { Disc.SetHighlight([]); UpdateTarget(); }
+        UpdateSelectionText();
+    }
+
+    private void PickInContents_Click(object sender, RoutedEventArgs e)
+    {
+        ModeSelected.IsChecked = true;
+        Tabs.SelectedIndex = 1;
+    }
+
+    // ---- right-click on a file or folder
+
+    private FileNode? _menuNode;
+
+    private void FileTree_PreviewRightClick(object sender, MouseButtonEventArgs e)
+    {
+        // select the item under the mouse so the menu acts on it
+        var item = FindParent<TreeViewItem>(e.OriginalSource as DependencyObject);
+        if (item != null) { item.IsSelected = true; item.Focus(); }
+    }
+
+    private static T? FindParent<T>(DependencyObject? d) where T : DependencyObject
+    {
+        while (d != null && d is not T) d = System.Windows.Media.VisualTreeHelper.GetParent(d);
+        return d as T;
+    }
+
+    private void TreeMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        _menuNode = FileTree.SelectedItem as FileNode;
+        bool has = _menuNode != null;
+        MenuRescueThis.IsEnabled = MenuToggleThis.IsEnabled = has && _engine == null;
+        MenuOpenThis.IsEnabled = has && _menuNode!.Entry.IsDirectory == false;
+        if (!has) { MenuRescueThis.Header = Loc.T("RescueSelected"); return; }
+        MenuRescueThis.Header = Loc.T(_menuNode!.Entry.IsDirectory ? "MenuRescueFolder" : "MenuRescueFile", _menuNode.Name);
+        MenuToggleThis.Header = Loc.T(_menuNode.IsChecked == true ? "MenuUnpick" : "MenuPick");
+    }
+
+    private void MenuRescueThis_Click(object sender, RoutedEventArgs e)
+    {
+        if (_menuNode == null || _rootNode == null) return;
+        foreach (var n in _rootNode.Children) n.IsChecked = false;
+        _menuNode.IsChecked = true;
+        RescueSelected_Click(sender, e);
+    }
+
+    private void MenuToggleThis_Click(object sender, RoutedEventArgs e)
+    {
+        if (_menuNode != null) _menuNode.IsChecked = _menuNode.IsChecked != true;
+        UpdateSelectionText();
+    }
+
+    private void MenuOpenThis_Click(object sender, RoutedEventArgs e) => FileTree_DoubleClick(sender, null!);
     private void RetryBad_Click(object sender, RoutedEventArgs e) => _ = RunRescueAsync(retryBad: true, _scopeRanges);
     private List<(long Start, long Count)>? _scopeRanges; // set while only picked files are being rescued
     private void Stop_Click(object sender, RoutedEventArgs e) => _rescueCts?.Cancel();
@@ -546,6 +621,8 @@ public partial class MainWindow : Window
         ContentEmpty.Visibility = Visibility.Collapsed;
         var root = new FileNode(fs.Root, fs.Source.KnowsDamage);
         _rootNode = root;
+        foreach (var n in root.SelfAndDescendants())
+            n.PropertyChanged += (_, a) => { if (a.PropertyName == nameof(FileNode.IsChecked)) Dispatcher.BeginInvoke(UpdateSelectionText, DispatcherPriority.Background); };
         _filesByExtent = fs.Files.Where(f => f.SectorCount > 0).OrderBy(f => f.Extent).ToList();
         root.Refresh(StatusMap);
         FileTree.ItemsSource = root.Children;

@@ -94,6 +94,15 @@
                         </Grid.RowDefinitions>
                         <Border Style="{StaticResource CardBox}">
                             <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="{Binding [RescueMode], Source={x:Static local:Loc.I}}"/>
+                                <WrapPanel Margin="0,0,0,14">
+                                    <RadioButton x:Name="ModeWhole" GroupName="mode" IsChecked="True" Foreground="{StaticResource Text}" Margin="0,0,24,0" VerticalContentAlignment="Center"
+                                                 Content="{Binding [ModeWhole], Source={x:Static local:Loc.I}}" Checked="Mode_Changed"/>
+                                    <RadioButton x:Name="ModeSelected" GroupName="mode" Foreground="{StaticResource Text}" Margin="0,0,12,0" VerticalContentAlignment="Center"
+                                                 Content="{Binding [ModeSelected], Source={x:Static local:Loc.I}}" Checked="Mode_Changed"/>
+                                    <Button x:Name="PickButton" Content="{Binding [PickInContents], Source={x:Static local:Loc.I}}" Click="PickInContents_Click" Padding="10,4" Margin="0"/>
+                                    <TextBlock x:Name="SelectionText" Style="{StaticResource Muted}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                                </WrapPanel>
                                 <TextBlock Style="{StaticResource H2}" Text="{Binding [SaveTo], Source={x:Static local:Loc.I}}"/>
                                 <DockPanel>
                                     <Button DockPanel.Dock="Right" Content="{Binding [Choose], Source={x:Static local:Loc.I}}" Click="ChooseFolder_Click" Margin="8,0,0,0"/>
@@ -187,7 +196,16 @@
                             <Button x:Name="UnmountButton" Content="{Binding [Unmount], Source={x:Static local:Loc.I}}" Click="Unmount_Click" IsEnabled="False"/>
                         </WrapPanel>
                         <Grid Grid.Row="2">
-                            <TreeView x:Name="FileTree" MouseDoubleClick="FileTree_DoubleClick" SelectedItemChanged="FileTree_SelectedItemChanged">
+                            <TreeView x:Name="FileTree" MouseDoubleClick="FileTree_DoubleClick" SelectedItemChanged="FileTree_SelectedItemChanged"
+                                      PreviewMouseRightButtonDown="FileTree_PreviewRightClick">
+                                <TreeView.ContextMenu>
+                                    <ContextMenu x:Name="TreeMenu" Opened="TreeMenu_Opened">
+                                        <MenuItem x:Name="MenuRescueThis" Click="MenuRescueThis_Click" FontWeight="SemiBold"/>
+                                        <MenuItem x:Name="MenuOpenThis" Header="{Binding [MenuOpen], Source={x:Static local:Loc.I}}" Click="MenuOpenThis_Click"/>
+                                        <Separator/>
+                                        <MenuItem x:Name="MenuToggleThis" Click="MenuToggleThis_Click"/>
+                                    </ContextMenu>
+                                </TreeView.ContextMenu>
                                 <TreeView.ItemTemplate>
                                     <HierarchicalDataTemplate DataType="{x:Type local:FileNode}" ItemsSource="{Binding Children}">
                                         <Grid Margin="0,2">
