@@ -1,0 +1,14 @@
+bin/
+obj/
+publish/
+*.user
+.vs/
+TestResults/
+
+# rescued data never belongs in the repository
+Kurtarilan/
+*.bin
+*.iso
+*.cue
+*.map
+*.map.tmp
