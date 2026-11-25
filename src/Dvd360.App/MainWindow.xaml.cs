@@ -37,6 +37,11 @@ public partial class MainWindow : Window
     private string? _mountedIso;
     private bool _contentBusy;
     private FileNode? _rootNode;
+    private System.ComponentModel.ICollectionView? _fileView;
+    private string _fileFilter = "all";
+
+    /// <summary>The file picked in whichever view is showing (card list or folder tree).</summary>
+    private FileNode? SelectedNode => (ViewTree.IsChecked == true ? FileTree.SelectedItem : FileList.SelectedItem) as FileNode;
     private SectorMap? _previewMap;           // map of an earlier rescue of the inserted disc
     private List<IsoEntry> _filesByExtent = new();
     private int _treeTick;
@@ -347,7 +352,9 @@ public partial class MainWindow : Window
     {
         // select the item under the mouse so the menu acts on it
         var item = FindParent<TreeViewItem>(e.OriginalSource as DependencyObject);
-        if (item != null) { item.IsSelected = true; item.Focus(); }
+        if (item != null) { item.IsSelected = true; item.Focus(); return; }
+        var card = FindParent<ListBoxItem>(e.OriginalSource as DependencyObject);
+        if (card != null) { card.IsSelected = true; card.Focus(); }
     }
 
     private static T? FindParent<T>(DependencyObject? d) where T : DependencyObject
@@ -356,9 +363,13 @@ public partial class MainWindow : Window
         return d as T;
     }
 
+    private MenuItem MenuRescueThis => (MenuItem)((ContextMenu)FileList.ContextMenu).Items[0];
+    private MenuItem MenuOpenThis => (MenuItem)((ContextMenu)FileList.ContextMenu).Items[1];
+    private MenuItem MenuToggleThis => (MenuItem)((ContextMenu)FileList.ContextMenu).Items[3];
+
     private void TreeMenu_Opened(object sender, RoutedEventArgs e)
     {
-        _menuNode = FileTree.SelectedItem as FileNode;
+        _menuNode = SelectedNode as FileNode;
         bool has = _menuNode != null;
         MenuRescueThis.IsEnabled = MenuToggleThis.IsEnabled = has && _engine == null;
         MenuOpenThis.IsEnabled = has && _menuNode!.Entry.IsDirectory == false;
@@ -643,6 +654,8 @@ public partial class MainWindow : Window
     private void ShowContent(IsoFileSystem? fs, string source, string? error)
     {
         FileTree.ItemsSource = null;
+        FileList.ItemsSource = null;
+        _fileView = null;
         _rootNode = null;
         _filesByExtent = new();
         FileInfoCard.Visibility = Visibility.Collapsed;
@@ -664,6 +677,11 @@ public partial class MainWindow : Window
         _filesByExtent = fs.Files.Where(f => f.SectorCount > 0).OrderBy(f => f.Extent).ToList();
         root.Refresh(StatusMap);
         FileTree.ItemsSource = root.Children;
+        var flat = root.SelfAndDescendants().Where(n => !n.Entry.IsDirectory).OrderBy(n => n.FolderText).ThenBy(n => n.Name).ToList();
+        _fileView = System.Windows.Data.CollectionViewSource.GetDefaultView(flat);
+        _fileView.Filter = FileFilter;
+        FileList.ItemsSource = _fileView;
+        UpdateContentStats();
         var files = fs.Files.ToList();
         int dirs = fs.Root.Descendants().Count(d => d.IsDirectory);
         ContentSummary.Text = $"{fs.VolumeId}  •  " + Loc.T("Files", files.Count, dirs, FormatBytes(files.Sum(f => f.DataSize)))
@@ -814,7 +832,7 @@ public partial class MainWindow : Window
 
     private async void FileTree_DoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (FileTree.SelectedItem is not FileNode { Entry.IsDirectory: false } node || _fs == null || _contentBusy) return;
+        if (SelectedNode is not FileNode { Entry.IsDirectory: false } node || _fs == null || _contentBusy) return;
         if (_fs.Source is LiveDiscSource && _liveDevice == null) { MessageBox.Show(this, Loc.T("RescueFirst"), "DVD 360"); return; }
         var fs = _fs;
         string dir = Path.Combine(Path.GetTempPath(), "DVD360", Guid.NewGuid().ToString("N")[..8]);
@@ -830,7 +848,18 @@ public partial class MainWindow : Window
 
     // ---- rescue only videos and music
 
-    private static bool IsMediaFile(IsoEntry f) => f.IsForm2 || IsVideo(f.Name) || IsAudio(f.Name);
+    private static bool IsMediaFile(IsoEntry f) => IsVideoFile(f) || IsAudio(f.Name);
+
+    /// <summary>
+    /// Real videos only. On a Video CD the menu picture (CDI_IMAG.RTF) and scan tables (SCANDATA.DAT) use the same
+    /// Mode 2 Form 2 sectors as video, so .DAT / Form 2 files count as video only inside MPEGAV, MPEG2 or SEGMENT.
+    /// </summary>
+    internal static bool IsVideoFile(IsoEntry f)
+    {
+        if (f.IsForm2 || Path.GetExtension(f.Name).Equals(".dat", StringComparison.OrdinalIgnoreCase))
+            return f.Parent?.Name.ToUpperInvariant() is "MPEGAV" or "MPEG2" or "SEGMENT";
+        return IsVideo(f.Name);
+    }
     internal static bool IsAudio(string name) => Path.GetExtension(name).ToLowerInvariant() is ".mp3" or ".wav" or ".wma" or ".flac" or ".m4a" or ".ogg" or ".aac" or ".mp2";
 
     /// <summary>Sectors of all video/music files and audio-CD tracks (plus the file system, so files can be found later).</summary>
@@ -991,7 +1020,73 @@ public partial class MainWindow : Window
     {
         if (_rootNode == null) return;
         _rootNode.Refresh(StatusMap);
-        if (FileTree.SelectedItem is FileNode n) ShowFileInfo(n);
+        UpdateContentStats();
+        if (SelectedNode is FileNode n) ShowFileInfo(n);
+    }
+
+    // ---- modern contents view: stats, filters, search, list / tree
+
+    private bool FileFilter(object o)
+    {
+        if (o is not FileNode n) return false;
+        bool cat = _fileFilter switch
+        {
+            "all" => true,
+            "problem" => n.HasProblem,
+            _ => n.Category.ToString() == _fileFilter,
+        };
+        string q = SearchBox.Text.Trim();
+        return cat && (q.Length == 0 || n.Name.Contains(q, StringComparison.CurrentCultureIgnoreCase) || n.FolderText.Contains(q, StringComparison.CurrentCultureIgnoreCase));
+    }
+
+    private void UpdateContentStats()
+    {
+        var files = _rootNode?.SelfAndDescendants().Where(n => !n.Entry.IsDirectory).ToList() ?? [];
+        int Count(FileCategory c) => files.Count(f => f.Category == c);
+        int problems = files.Count(f => f.HasProblem);
+        bool known = files.Any(f => f.PctText.Length > 0);
+        CntFiles.Text = files.Count == 0 ? "—" : $"{files.Count:N0}";
+        CntIntact.Text = known ? $"{files.Count - problems:N0}" : "—";
+        CntProblem.Text = known ? $"{problems:N0}" : "—";
+        CntVideo.Text = $"{Count(FileCategory.Video):N0}";
+        CntPhoto.Text = $"{Count(FileCategory.Image):N0}";
+        CntMusic.Text = $"{Count(FileCategory.Audio):N0}";
+        FilterAll.Content = $"{Loc.T("FilterAll")}  {files.Count}";
+        FilterVideo.Content = $"{Loc.T("CardVideos")}  {Count(FileCategory.Video)}";
+        FilterImage.Content = $"{Loc.T("CardPhotos")}  {Count(FileCategory.Image)}";
+        FilterAudio.Content = $"{Loc.T("CardMusic")}  {Count(FileCategory.Audio)}";
+        FilterDocument.Content = $"{Loc.T("FilterDocs")}  {Count(FileCategory.Document)}";
+        FilterProblem.Content = $"{Loc.T("CardProblem")}  {problems}";
+        StatsStrip.Visibility = FilterChips.Visibility = files.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        _fileView?.Refresh();
+    }
+
+    private void Filter_Changed(object sender, RoutedEventArgs e)
+    {
+        if (sender is RadioButton { Tag: string tag }) _fileFilter = tag;
+        _fileView?.Refresh();
+    }
+
+    private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        SearchHint.Visibility = SearchBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (ViewTree.IsChecked == true && SearchBox.Text.Length > 0) ViewList.IsChecked = true; // search shows the list
+        _fileView?.Refresh();
+    }
+
+    private void View_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!IsLoaded) return;
+        bool tree = ViewTree.IsChecked == true;
+        FileTree.Visibility = tree ? Visibility.Visible : Visibility.Collapsed;
+        FileList.Visibility = tree ? Visibility.Collapsed : Visibility.Visible;
+        FilterChips.IsEnabled = !tree;
+    }
+
+    private void FileList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (FileList.SelectedItem is FileNode n) { Disc.SetHighlight(n.Ranges()); ShowFileInfo(n); }
+        else { Disc.SetHighlight([]); FileInfoCard.Visibility = Visibility.Collapsed; }
     }
 
     private void FileTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
@@ -1106,7 +1201,7 @@ public partial class MainWindow : Window
                 Detail = $"{_fs.VolumeId} — {string.Join(" + ", parts.Select(p => p.Name))} — {FormatBytes(parts.Sum(p => p.DataSize))}",
             });
         }
-        foreach (var f in _fs.Files.Where(f => (f.IsForm2 || IsVideo(f.Name)) && !vobParts.Contains(f) && !f.Name.Equals("VIDEO_TS.VOB", StringComparison.OrdinalIgnoreCase)))
+        foreach (var f in _fs.Files.Where(f => IsVideoFile(f) && !vobParts.Contains(f) && !f.Name.Equals("VIDEO_TS.VOB", StringComparison.OrdinalIgnoreCase)))
         {
             if (_videos.Any(v => v.Entry == f)) continue;
             if (_videos.Any(v => v.Entry != null && v.Name == f.OutputName && v.Detail.StartsWith(_fs.VolumeId))) continue;
@@ -1349,7 +1444,7 @@ public partial class MainWindow : Window
         if (_disc == null) { Warn(Loc.T("InsertDisc")); return; }
         if (MessageBox.Show(this, Loc.T("OneClickConfirm", FolderBox.Text.Trim()), "DVD 360", MessageBoxButton.OKCancel, MessageBoxImage.Information) != MessageBoxResult.OK) return;
 
-        bool hasVideo = _fs != null && _fs.Files.Any(f => f.IsForm2 || IsVideo(f.Name));
+        bool hasVideo = _fs != null && _fs.Files.Any(IsVideoFile);
         if (hasVideo && VideoConverter.FindFfmpeg() == null &&
             MessageBox.Show(this, Loc.T("AskFfmpeg"), "DVD 360", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
         {

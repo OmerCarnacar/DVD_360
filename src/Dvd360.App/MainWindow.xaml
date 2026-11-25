@@ -206,20 +206,131 @@
                 <!-- CONTENTS -->
                 <TabItem Header="{Binding [TabContent], Source={x:Static local:Loc.I}}">
                     <Grid>
+                        <Grid.Resources>
+                            <ContextMenu x:Key="FileMenu" Opened="TreeMenu_Opened">
+                                <MenuItem x:Name="MenuRescueThis" Click="MenuRescueThis_Click" FontWeight="SemiBold"/>
+                                <MenuItem x:Name="MenuOpenThis" Header="{Binding [MenuOpen], Source={x:Static local:Loc.I}}" Click="MenuOpenThis_Click"/>
+                                <Separator/>
+                                <MenuItem x:Name="MenuToggleThis" Click="MenuToggleThis_Click"/>
+                            </ContextMenu>
+                        </Grid.Resources>
                         <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
-                        <DockPanel Margin="0,0,0,8">
+
+                        <!-- header -->
+                        <DockPanel Margin="0,0,0,10">
                             <Button DockPanel.Dock="Right" Content="{Binding [OpenImage], Source={x:Static local:Loc.I}}" Click="OpenImage_Click" Margin="0"/>
                             <StackPanel>
                                 <TextBlock x:Name="ContentSource" Style="{StaticResource H2}" Margin="0"/>
                                 <TextBlock x:Name="ContentSummary" Style="{StaticResource Muted}"/>
                             </StackPanel>
                         </DockPanel>
-                        <WrapPanel Grid.Row="1">
+
+                        <!-- summary cards -->
+                        <UniformGrid x:Name="StatsStrip" Grid.Row="1" Columns="6" Margin="0,0,-8,4">
+                            <Border Style="{StaticResource StatCard}">
+                                <DockPanel>
+                                    <Border Width="30" Height="30" CornerRadius="8" Background="#3B82F6" Opacity="0.95" Margin="0,0,8,0" VerticalAlignment="Top">
+                                        <TextBlock Text="&#xE8B7;" FontFamily="{StaticResource Icons}" FontSize="14" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <StackPanel>
+                                        <TextBlock x:Name="CntFiles" Text="—" FontSize="18" FontWeight="SemiBold" TextWrapping="NoWrap"/>
+                                        <TextBlock Text="{Binding [CardFiles], Source={x:Static local:Loc.I}}" Style="{StaticResource Muted}" FontSize="11.5" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                </DockPanel>
+                            </Border>
+                            <Border Style="{StaticResource StatCard}">
+                                <DockPanel>
+                                    <Border Width="30" Height="30" CornerRadius="8" Background="#16A34A" Opacity="0.95" Margin="0,0,8,0" VerticalAlignment="Top">
+                                        <TextBlock Text="&#xE73E;" FontFamily="{StaticResource Icons}" FontSize="14" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <StackPanel>
+                                        <TextBlock x:Name="CntIntact" Text="—" FontSize="18" FontWeight="SemiBold" TextWrapping="NoWrap"/>
+                                        <TextBlock Text="{Binding [CardIntact], Source={x:Static local:Loc.I}}" Style="{StaticResource Muted}" FontSize="11.5" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                </DockPanel>
+                            </Border>
+                            <Border Style="{StaticResource StatCard}">
+                                <DockPanel>
+                                    <Border Width="30" Height="30" CornerRadius="8" Background="#E11D48" Opacity="0.95" Margin="0,0,8,0" VerticalAlignment="Top">
+                                        <TextBlock Text="&#xE7BA;" FontFamily="{StaticResource Icons}" FontSize="14" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <StackPanel>
+                                        <TextBlock x:Name="CntProblem" Text="—" FontSize="18" FontWeight="SemiBold" TextWrapping="NoWrap"/>
+                                        <TextBlock Text="{Binding [CardProblem], Source={x:Static local:Loc.I}}" Style="{StaticResource Muted}" FontSize="11.5" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                </DockPanel>
+                            </Border>
+                            <Border Style="{StaticResource StatCard}">
+                                <DockPanel>
+                                    <Border Width="30" Height="30" CornerRadius="8" Background="#8B5CF6" Opacity="0.95" Margin="0,0,8,0" VerticalAlignment="Top">
+                                        <TextBlock Text="&#xE714;" FontFamily="{StaticResource Icons}" FontSize="14" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <StackPanel>
+                                        <TextBlock x:Name="CntVideo" Text="—" FontSize="18" FontWeight="SemiBold" TextWrapping="NoWrap"/>
+                                        <TextBlock Text="{Binding [CardVideos], Source={x:Static local:Loc.I}}" Style="{StaticResource Muted}" FontSize="11.5" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                </DockPanel>
+                            </Border>
+                            <Border Style="{StaticResource StatCard}">
+                                <DockPanel>
+                                    <Border Width="30" Height="30" CornerRadius="8" Background="#DB2777" Opacity="0.95" Margin="0,0,8,0" VerticalAlignment="Top">
+                                        <TextBlock Text="&#xE91B;" FontFamily="{StaticResource Icons}" FontSize="14" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <StackPanel>
+                                        <TextBlock x:Name="CntPhoto" Text="—" FontSize="18" FontWeight="SemiBold" TextWrapping="NoWrap"/>
+                                        <TextBlock Text="{Binding [CardPhotos], Source={x:Static local:Loc.I}}" Style="{StaticResource Muted}" FontSize="11.5" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                </DockPanel>
+                            </Border>
+                            <Border Style="{StaticResource StatCard}">
+                                <DockPanel>
+                                    <Border Width="30" Height="30" CornerRadius="8" Background="#D97706" Opacity="0.95" Margin="0,0,8,0" VerticalAlignment="Top">
+                                        <TextBlock Text="&#xE8D6;" FontFamily="{StaticResource Icons}" FontSize="14" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <StackPanel>
+                                        <TextBlock x:Name="CntMusic" Text="—" FontSize="18" FontWeight="SemiBold" TextWrapping="NoWrap"/>
+                                        <TextBlock Text="{Binding [CardMusic], Source={x:Static local:Loc.I}}" Style="{StaticResource Muted}" FontSize="11.5" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                </DockPanel>
+                            </Border>
+                        </UniformGrid>
+
+                        <!-- filters, search, view -->
+                        <DockPanel Grid.Row="2" Margin="0,4,0,2">
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="0,0,0,8" VerticalAlignment="Top">
+                                <Grid Width="180" Height="32" Margin="0,0,8,0">
+                                    <TextBox x:Name="SearchBox" TextChanged="SearchBox_TextChanged" Padding="30,6,8,6"/>
+                                    <TextBlock Text="&#xE721;" FontFamily="{StaticResource Icons}" Foreground="{StaticResource MutedBrush}" Margin="10,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                                    <TextBlock x:Name="SearchHint" Text="{Binding [Search], Source={x:Static local:Loc.I}}" Foreground="{StaticResource MutedBrush}" Margin="31,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                                </Grid>
+                                <RadioButton x:Name="ViewList" GroupName="view" Style="{StaticResource Chip}" IsChecked="True" Checked="View_Changed" Margin="0,0,4,0"
+                                             ToolTip="{Binding [ViewList], Source={x:Static local:Loc.I}}">
+                                    <TextBlock Text="&#xE8FD;" FontFamily="{StaticResource Icons}"/>
+                                </RadioButton>
+                                <RadioButton x:Name="ViewTree" GroupName="view" Style="{StaticResource Chip}" Checked="View_Changed" Margin="0"
+                                             ToolTip="{Binding [ViewTree], Source={x:Static local:Loc.I}}">
+                                    <TextBlock Text="&#xE8B7;" FontFamily="{StaticResource Icons}"/>
+                                </RadioButton>
+                            </StackPanel>
+                            <WrapPanel x:Name="FilterChips">
+                                <RadioButton x:Name="FilterAll" GroupName="filter" Style="{StaticResource Chip}" IsChecked="True" Tag="all" Checked="Filter_Changed"/>
+                                <RadioButton x:Name="FilterVideo" GroupName="filter" Style="{StaticResource Chip}" Tag="Video" Checked="Filter_Changed"/>
+                                <RadioButton x:Name="FilterImage" GroupName="filter" Style="{StaticResource Chip}" Tag="Image" Checked="Filter_Changed"/>
+                                <RadioButton x:Name="FilterAudio" GroupName="filter" Style="{StaticResource Chip}" Tag="Audio" Checked="Filter_Changed"/>
+                                <RadioButton x:Name="FilterDocument" GroupName="filter" Style="{StaticResource Chip}" Tag="Document" Checked="Filter_Changed"/>
+                                <RadioButton x:Name="FilterProblem" GroupName="filter" Style="{StaticResource Chip}" Tag="problem" Checked="Filter_Changed"/>
+                            </WrapPanel>
+                        </DockPanel>
+
+                        <!-- actions -->
+                        <WrapPanel Grid.Row="3">
                             <Button x:Name="RescueSelectedButton" Style="{StaticResource Primary}" Content="{Binding [RescueSelected], Source={x:Static local:Loc.I}}" Click="RescueSelected_Click"/>
                             <Button Content="{Binding [SelectAll], Source={x:Static local:Loc.I}}" Click="SelectAll_Click"/>
                             <Button Content="{Binding [SelectNone], Source={x:Static local:Loc.I}}" Click="SelectNone_Click"/>
@@ -234,39 +345,78 @@
                             <Button x:Name="MountButton" Content="{Binding [Mount], Source={x:Static local:Loc.I}}" Click="Mount_Click"/>
                             <Button x:Name="UnmountButton" Content="{Binding [Unmount], Source={x:Static local:Loc.I}}" Click="Unmount_Click" IsEnabled="False"/>
                         </WrapPanel>
-                        <Grid Grid.Row="2">
-                            <TreeView x:Name="FileTree" MouseDoubleClick="FileTree_DoubleClick" SelectedItemChanged="FileTree_SelectedItemChanged"
-                                      PreviewMouseRightButtonDown="FileTree_PreviewRightClick">
-                                <TreeView.ContextMenu>
-                                    <ContextMenu x:Name="TreeMenu" Opened="TreeMenu_Opened">
-                                        <MenuItem x:Name="MenuRescueThis" Click="MenuRescueThis_Click" FontWeight="SemiBold"/>
-                                        <MenuItem x:Name="MenuOpenThis" Header="{Binding [MenuOpen], Source={x:Static local:Loc.I}}" Click="MenuOpenThis_Click"/>
-                                        <Separator/>
-                                        <MenuItem x:Name="MenuToggleThis" Click="MenuToggleThis_Click"/>
-                                    </ContextMenu>
-                                </TreeView.ContextMenu>
+
+                        <!-- files: card list (default) or folder tree -->
+                        <Grid Grid.Row="4">
+                            <ListBox x:Name="FileList" Background="Transparent" BorderThickness="0" Padding="0"
+                                     ItemContainerStyle="{StaticResource FileCard}" ContextMenu="{StaticResource FileMenu}"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.ScrollUnit="Pixel"
+                                     SelectionChanged="FileList_SelectionChanged" MouseDoubleClick="FileTree_DoubleClick" PreviewMouseRightButtonDown="FileTree_PreviewRightClick">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type local:FileNode}">
+                                        <Grid Height="44">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="28"/>
+                                                <ColumnDefinition Width="48"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="86"/>
+                                                <ColumnDefinition Width="150"/>
+                                                <ColumnDefinition Width="Auto" MinWidth="96"/>
+                                            </Grid.ColumnDefinitions>
+                                            <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}" VerticalAlignment="Center" Margin="0"/>
+                                            <Border Grid.Column="1" Width="38" Height="38" CornerRadius="10" Background="{Binding TileBrush}" HorizontalAlignment="Left">
+                                                <TextBlock Text="{Binding Glyph}" FontFamily="{StaticResource Icons}" FontSize="17" Foreground="{Binding TileFore}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                            <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="0,0,10,0">
+                                                <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding FolderText}" Style="{StaticResource Muted}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="3" Text="{Binding SizeText}" Style="{StaticResource Muted}" FontSize="13" TextAlignment="Right" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                                            <StackPanel Grid.Column="4" VerticalAlignment="Center" Margin="0,0,12,0">
+                                                <Border Height="6" CornerRadius="3" Background="#0C111B" Width="120" HorizontalAlignment="Left" ClipToBounds="True">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Border Width="{Binding OkWidth}" Background="{StaticResource OkBrush}"/>
+                                                        <Border Width="{Binding ErrWidth}" Background="{StaticResource RetryBrush}"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <TextBlock Text="{Binding PctText}" Style="{StaticResource Muted}" FontSize="11" Margin="0,3,0,0"/>
+                                            </StackPanel>
+                                            <Border Grid.Column="5" CornerRadius="11" Padding="10,3" Background="{Binding ChipBack}" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding ChipText}" Foreground="{Binding ChipFore}" FontSize="12" FontWeight="SemiBold" TextWrapping="NoWrap"/>
+                                            </Border>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+
+                            <TreeView x:Name="FileTree" Visibility="Collapsed" ContextMenu="{StaticResource FileMenu}" MouseDoubleClick="FileTree_DoubleClick"
+                                      SelectedItemChanged="FileTree_SelectedItemChanged" PreviewMouseRightButtonDown="FileTree_PreviewRightClick">
                                 <TreeView.ItemTemplate>
                                     <HierarchicalDataTemplate DataType="{x:Type local:FileNode}" ItemsSource="{Binding Children}">
-                                        <Grid Margin="0,2">
+                                        <Grid Margin="0,3">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="26"/>
-                                                <ColumnDefinition Width="26"/>
-                                                <ColumnDefinition Width="360"/>
-                                                <ColumnDefinition Width="110"/>
+                                                <ColumnDefinition Width="32"/>
+                                                <ColumnDefinition Width="340"/>
+                                                <ColumnDefinition Width="100"/>
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
-                                            <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}" IsThreeState="False" VerticalAlignment="Center" Margin="0"/>
-                                            <TextBlock Grid.Column="1" Text="{Binding Icon}" FontFamily="Segoe UI Emoji"/>
-                                            <TextBlock Grid.Column="2" Text="{Binding Name}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
-                                            <TextBlock Grid.Column="3" Text="{Binding SizeText}" Style="{StaticResource Muted}" TextAlignment="Right" Margin="0,0,16,0"/>
-                                            <TextBlock Grid.Column="4" Text="{Binding StateText}" Foreground="{Binding StateBrush}" FontSize="12"/>
+                                            <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}" VerticalAlignment="Center" Margin="0"/>
+                                            <Border Grid.Column="1" Width="24" Height="24" CornerRadius="7" Background="{Binding TileBrush}" HorizontalAlignment="Left">
+                                                <TextBlock Text="{Binding Glyph}" FontFamily="{StaticResource Icons}" FontSize="12" Foreground="{Binding TileFore}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                            <TextBlock Grid.Column="2" Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
+                                            <TextBlock Grid.Column="3" Text="{Binding SizeText}" Style="{StaticResource Muted}" TextAlignment="Right" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                                            <Border Grid.Column="4" CornerRadius="10" Padding="9,2" Background="{Binding ChipBack}" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding ChipText}" Foreground="{Binding ChipFore}" FontSize="11.5" FontWeight="SemiBold"/>
+                                            </Border>
                                         </Grid>
                                     </HierarchicalDataTemplate>
                                 </TreeView.ItemTemplate>
                             </TreeView>
                             <TextBlock x:Name="ContentEmpty" Style="{StaticResource Muted}" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" Text="{Binding [NoContent], Source={x:Static local:Loc.I}}"/>
                         </Grid>
-                        <StackPanel Grid.Row="3" Margin="0,10,0,0">
+                        <StackPanel Grid.Row="5" Margin="0,10,0,0">
                             <ProgressBar x:Name="ContentProgress" Maximum="1000" Visibility="Collapsed" Foreground="{StaticResource Accent}"/>
                             <TextBlock x:Name="ContentStatus" Style="{StaticResource Muted}" Margin="0,6,0,0"/>
                         </StackPanel>

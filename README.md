@@ -9,7 +9,7 @@
 
 ![Kurtarma ekranı: disk, dolu (yeşil), hatalı (kırmızı) ve henüz okunmamış (gümüş) bölgeleri gerçek konumlarında gösteriyor](docs/screenshots/01-kurtarma.png)
 
-| İçerik: her dosyanın durumu, seçilen dosya diskte parlıyor | Yardım ve İngilizce arayüz |
+| İçerik: özet kartları, filtreler, dosya kartları ve doluluk çubukları | Yardım ve İngilizce arayüz |
 |---|---|
 | ![İçerik sekmesi](docs/screenshots/02-icerik.png) | ![Yardım sekmesi](docs/screenshots/04-help.png) |
 
