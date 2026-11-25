@@ -62,6 +62,12 @@
                             </Grid>
                         </StackPanel>
                     </Border>
+                    <Border x:Name="FileInfoCard" Style="{StaticResource CardBox}" Visibility="Collapsed" Padding="14,10">
+                        <StackPanel>
+                            <TextBlock x:Name="FileInfoName" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
+                            <TextBlock x:Name="FileInfoState" Style="{StaticResource Muted}" Margin="0,2,0,0"/>
+                        </StackPanel>
+                    </Border>
                     <WrapPanel Margin="4,0">
                         <Ellipse Width="10" Height="10" Fill="{StaticResource OkBrush}" Margin="0,0,5,0"/>
                         <TextBlock Style="{StaticResource Muted}" Text="{Binding [LegendOk], Source={x:Static local:Loc.I}}" Margin="0,0,14,0"/>
@@ -176,7 +182,7 @@
                             <Button x:Name="UnmountButton" Content="{Binding [Unmount], Source={x:Static local:Loc.I}}" Click="Unmount_Click" IsEnabled="False"/>
                         </WrapPanel>
                         <Grid Grid.Row="2">
-                            <TreeView x:Name="FileTree" MouseDoubleClick="FileTree_DoubleClick">
+                            <TreeView x:Name="FileTree" MouseDoubleClick="FileTree_DoubleClick" SelectedItemChanged="FileTree_SelectedItemChanged">
                                 <TreeView.ItemTemplate>
                                     <HierarchicalDataTemplate DataType="{x:Type local:FileNode}" ItemsSource="{Binding Children}">
                                         <Grid Margin="0,2">

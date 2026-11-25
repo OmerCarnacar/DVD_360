@@ -35,6 +35,24 @@ public sealed class DiscView : Grid
     private readonly Canvas _overlay = new() { IsHitTestVisible = false };
     private DiscViewMode _mode = (DiscViewMode)(-1);
     private double _headFraction = -1;
+    private SectorMap? _lastMap;
+    private long _lastLba, _total = 1;
+    private readonly bool[] _highlight = new bool[Cells];
+    private bool _hasHighlight;
+    private readonly ToolTip _tip = new() { Placement = System.Windows.Controls.Primitives.PlacementMode.Mouse, HorizontalOffset = 14, VerticalOffset = 14 };
+
+    /// <summary>Raised while the mouse moves over the data area: the first sector under the pointer (or null).</summary>
+    public event Action<long?>? SectorHovered;
+
+    /// <summary>Total sectors on the disc, so positions can be mapped without a sector map.</summary>
+    public long TotalSectors { get => _total; set => _total = Math.Max(1, value); }
+
+    /// <summary>Text shown in the hover tooltip; set it from <see cref="SectorHovered"/>.</summary>
+    public object? HoverContent
+    {
+        get => _tip.Content;
+        set { _tip.Content = value; _tip.IsOpen = value != null; }
+    }
 
     private static readonly uint Silver = Bgra(0xC9, 0xD1, 0xDC), Ok = Bgra(0x2E, 0xD5, 0x73), OkLight = Bgra(0x8E, 0xE6, 0xB0),
         Bad = Bgra(0xFF, 0x4D, 0x5E), Retry = Bgra(0xFF, 0xB0, 0x20), Skipped = Bgra(0x4A, 0x52, 0x63), Hub = Bgra(0xE8, 0xEC, 0xF2), HubRing = Bgra(0x9A, 0xA4, 0xB4);
@@ -76,6 +94,10 @@ public sealed class DiscView : Grid
         Children.Add(_center);
         Children.Add(_caption);
         SizeChanged += (_, _) => PlaceHead(_headFraction < 0 ? 0 : _headFraction, animate: false);
+        Background = Brushes.Transparent; // receive mouse events everywhere
+        _tip.PlacementTarget = this;
+        MouseMove += (_, e) => SectorHovered?.Invoke(SectorAt(e.GetPosition(this)));
+        MouseLeave += (_, _) => { SectorHovered?.Invoke(null); HoverContent = null; };
         SetMode(DiscViewMode.Empty, Loc.T("InsertDisc"));
     }
 
@@ -146,6 +168,9 @@ public sealed class DiscView : Grid
     /// <summary>Redraws the surface from the sector map (null = fresh silver disc).</summary>
     public void Render(SectorMap? map, long currentLba)
     {
+        _lastMap = map;
+        _lastLba = currentLba;
+        if (map != null) _total = map.Count;
         Array.Fill(_cellColor, -1);
         double percent = 0;
         if (map != null)
@@ -193,10 +218,44 @@ public sealed class DiscView : Grid
                     1 => Ok, 2 => Retry, 3 => Bad, 4 => Skipped, 5 => OkLight, _ => Silver,
                 },
             };
-            if (cell >= 0) color = Shade(color, _pixelShade[i]);
+            if (cell >= 0) color = Shade(color, _hasHighlight && cell < Cells && !_highlight[cell] ? (byte)(_pixelShade[i] * 32 / 100) : _pixelShade[i]);
             _pixels[i] = color;
         }
         _bitmap.WritePixels(new Int32Rect(0, 0, Px, Px), _pixels, Px * 4, 0);
+    }
+
+    /// <summary>Lights up the given sector ranges and dims the rest of the disc (empty = no highlight).</summary>
+    public void SetHighlight(IEnumerable<(long Start, long Count)> ranges)
+    {
+        Array.Clear(_highlight);
+        _hasHighlight = false;
+        foreach (var (start, count) in ranges)
+        {
+            if (count <= 0) continue;
+            int first = (int)Math.Clamp(start * Cells / _total, 0, Cells - 1);
+            int last = (int)Math.Clamp((start + count - 1) * Cells / _total, 0, Cells - 1);
+            for (int c = first; c <= last; c++) _highlight[c] = true;
+            _hasHighlight = true;
+        }
+        if (_mode != DiscViewMode.Empty) Render(_lastMap, _lastLba);
+    }
+
+    /// <summary>Which sector is under a point, taking the current spin into account.</summary>
+    private long? SectorAt(Point p)
+    {
+        if (_mode is DiscViewMode.Empty) return null;
+        double size = Math.Min(ActualWidth, ActualHeight);
+        if (size <= 0) return null;
+        double R = size / 2 * _pop.ScaleX, r0 = InnerR * R, r1 = OuterR * R;
+        double dx = p.X - ActualWidth / 2, dy = p.Y - ActualHeight / 2, r = Math.Sqrt(dx * dx + dy * dy);
+        if (r < r0 || r > r1) return null;
+        double f = (r * r - r0 * r0) / (r1 * r1 - r0 * r0);
+        int ring = Math.Min(Rings - 1, (int)(f * Rings));
+        double ang = (Math.Atan2(dy, dx) - _spin.Angle * Math.PI / 180 + Math.PI) / (2 * Math.PI);
+        ang -= Math.Floor(ang);
+        int seg = Math.Min(Segments - 1, (int)(ang * Segments));
+        long cell = ring * Segments + seg;
+        return cell * _total / Cells;
     }
 
     private static uint Shade(uint c, byte pct)

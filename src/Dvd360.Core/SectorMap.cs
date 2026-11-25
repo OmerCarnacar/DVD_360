@@ -90,6 +90,37 @@ public sealed class SectorMap
         File.Move(tmp, path, overwrite: true);
     }
 
+    /// <summary>Reads only the header of a map file: (sector size, sector count), or null if it is not one.</summary>
+    public static (int SectorSize, long Count)? TryReadHeader(string path)
+    {
+        try
+        {
+            using var fs = File.OpenRead(path);
+            using var r = new BinaryReader(fs);
+            if (!r.ReadBytes(Magic.Length).AsSpan().SequenceEqual(Magic)) return null;
+            return (r.ReadInt32(), r.ReadInt64());
+        }
+        catch { return null; }
+    }
+
+    /// <summary>Counts sectors per state in [start, start+count).</summary>
+    public (long Ok, long Bad, long Retry, long Pending) Summarize(long start, long count)
+    {
+        long ok = 0, bad = 0, retry = 0, pending = 0;
+        long end = Math.Min(Count, start + count);
+        for (long i = Math.Max(0, start); i < end; i++)
+        {
+            switch ((SectorState)_states[i])
+            {
+                case SectorState.Ok: case SectorState.Skipped: ok++; break;
+                case SectorState.Bad: bad++; break;
+                case SectorState.NeedsRetry: retry++; break;
+                default: pending++; break;
+            }
+        }
+        return (ok, bad, retry, pending);
+    }
+
     public static SectorMap Load(string path)
     {
         using var fs = File.OpenRead(path);

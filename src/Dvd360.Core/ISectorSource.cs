@@ -33,12 +33,14 @@ public sealed class LiveDiscSource(ISectorDevice device) : ISectorSource
         if (_cache.TryGetValue(lba, out var hit)) return hit;
         var buf = new byte[device.Info.SectorSize];
         byte[]? result = null;
-        for (int i = 0; i < 2 && result == null; i++)
+        // Browsing must stay snappy: one quick try. Getting hard sectors back is the rescue's job.
+        uint timeout = device.ReadTimeoutSeconds;
+        device.ReadTimeoutSeconds = 3;
+        try
         {
-            var r = device.Read(lba, 1, buf);
-            if (r == ReadOutcome.Ok && (!IsRawCd || CdSector.Verify(buf, lba))) result = buf;
-            else if (r is ReadOutcome.NotPresent or ReadOutcome.NoMedia) break;
+            if (device.Read(lba, 1, buf) == ReadOutcome.Ok && (!IsRawCd || CdSector.Verify(buf, lba))) result = buf;
         }
+        finally { device.ReadTimeoutSeconds = timeout; }
         if (_cache.Count > 20000) _cache.Clear();
         _cache[lba] = result;
         return result;

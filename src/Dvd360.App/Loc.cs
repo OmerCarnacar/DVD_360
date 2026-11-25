@@ -150,5 +150,12 @@ public sealed class Loc : INotifyPropertyChanged
         ["About"] = ("Hakkında", "About"),
         ["AboutText"] = ("DVD 360 — ücretsiz ve açık kaynak (MIT lisansı).\nGeliştirici: Ömer Çarnaçar", "DVD 360 — free and open source (MIT license).\nDeveloper: Ömer Çarnaçar"),
         ["Error"] = ("Hata", "Error"),
+        ["FoundEarlier"] = ("Bu diskin önceki kurtarması bulundu: {0} — \"Devam et\"e basınca kaldığı yerden sürer.", "Found an earlier rescue of this disc: {0} — press \"Continue\" to pick up where it stopped."),
+        ["NoFileHere"] = ("Dosya yok (dosya sistemi / boş alan)", "No file here (file system / free space)"),
+        ["SectorState_Untried"] = ("Henüz okunmadı", "Not read yet"),
+        ["SectorState_Ok"] = ("Okundu", "Read"),
+        ["SectorState_NeedsRetry"] = ("Tekrar denenecek", "To retry"),
+        ["SectorState_Bad"] = ("Bozuk", "Bad"),
+        ["SectorState_Skipped"] = ("Diskte yok", "Not on disc"),
     };
 }

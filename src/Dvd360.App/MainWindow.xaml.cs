@@ -36,6 +36,13 @@ public partial class MainWindow : Window
     private IsoFileSystem? _fs;
     private string? _mountedIso;
     private bool _contentBusy;
+    private FileNode? _rootNode;
+    private SectorMap? _previewMap;           // map of an earlier rescue of the inserted disc
+    private List<IsoEntry> _filesByExtent = new();
+    private int _treeTick;
+
+    /// <summary>The freshest knowledge of which sectors are good: running rescue, opened image, or earlier rescue.</summary>
+    private SectorMap? StatusMap => _engine?.Map ?? (_fs?.Source is DiscImage img ? img.Map : _previewMap);
 
     // ---- video
     private readonly ObservableCollection<VideoItem> _videos = new();
@@ -50,8 +57,10 @@ public partial class MainWindow : Window
         CoreText.Turkish = !Loc.I.English;
         Title = "DVD 360 — " + Loc.T("AppSubtitle");
         AboutVersion.Text = "v" + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0");
-        FolderBox.Text = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "DVD360");
-        VideoFolderBox.Text = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "DVD360");
+        var settings = AppSettings.Load();
+        FolderBox.Text = settings.Folder ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "DVD360");
+        VideoFolderBox.Text = settings.VideoFolder ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "DVD360");
+        Disc.SectorHovered += Disc_SectorHovered;
         SetAutoName("Disk_" + DateTime.Now.ToString("yyyyMMdd_HHmm"));
         VideoList.ItemsSource = _videos;
         _uiTimer.Tick += (_, _) => UpdateRescueUi();
@@ -126,7 +135,7 @@ public partial class MainWindow : Window
         Disc.SetMode(DiscViewMode.Detecting, Loc.T("Detecting"));
         DiscStatus.Text = Loc.T("Detecting");
         DiscStatus.Foreground = (System.Windows.Media.Brush)FindResource("MutedBrush");
-        CloseLiveContent();
+        CloseLiveContent(clearTree: true);
 
         ScsiOpticalDevice? dev = null;
         IsoFileSystem? fs = null;
@@ -165,18 +174,23 @@ public partial class MainWindow : Window
         ExtText.Text = _disc.ImageExtension;
 
         string label = InfoLabel.Text is "—" or "" ? "Disk" : InfoLabel.Text;
-        if (_nameIsAuto) SetAutoName(IsoFileSystem.Sanitize(label) + "_" + DateTime.Now.ToString("yyyyMMdd"));
-        UpdateTarget();
+        Disc.TotalSectors = _disc.TotalSectors;
+        string? earlier = _nameIsAuto ? FindEarlierRescue(_disc) : null;
+        if (_nameIsAuto)
+            SetAutoName(earlier != null ? Path.GetFileNameWithoutExtension(earlier) : IsoFileSystem.Sanitize(label) + "_" + DateTime.Now.ToString("yyyyMMdd"));
+        if (earlier != null) AddLog(Loc.T("FoundEarlier", Path.GetFileName(earlier)));
         Disc.SetMode(DiscViewMode.Idle, label);
 
         _fs = fs;
         ShowContent(fs, Loc.T("SourceLive", letter), fs == null ? fsError : null);
+        UpdateTarget();
         if (fs != null && fs.HasForm2Files) AddLog(Loc.I.English ? "Video CD detected. After the rescue the videos can be turned into MP4." : "Video CD algılandı. Kurtarmadan sonra videolar MP4'e çevrilebilir.");
     }
 
     private void OnDiscGone()
     {
-        CloseLiveContent();
+        CloseLiveContent(clearTree: true);
+        _previewMap = null;
         _disc = null;
         Disc.SetMode(DiscViewMode.Empty, Loc.T("InsertDisc"));
         DiscStatus.Text = Loc.T("InsertDisc");
@@ -185,12 +199,38 @@ public partial class MainWindow : Window
         UpdateTarget();
     }
 
-    private void CloseLiveContent()
+    /// <summary>Releases the drive. The tree can stay on screen (its sector layout is still valid for the rescue).</summary>
+    private void CloseLiveContent(bool clearTree)
     {
-        if (_liveDevice == null) return;
-        if (_fs?.Source is LiveDiscSource) { _fs = null; ShowContent(null, "", null); }
-        _liveDevice.Dispose();
+        if (clearTree && _fs?.Source is LiveDiscSource) { _fs = null; ShowContent(null, "", null); }
+        _liveDevice?.Dispose();
         _liveDevice = null;
+    }
+
+    /// <summary>Looks in the save folder for an unfinished or finished rescue of this same disc.</summary>
+    private string? FindEarlierRescue(DiscInfo disc)
+    {
+        try
+        {
+            string folder = FolderBox.Text.Trim();
+            if (!Directory.Exists(folder)) return null;
+            foreach (var map in new DirectoryInfo(folder).EnumerateFiles("*" + disc.ImageExtension + ".map").OrderByDescending(f => f.LastWriteTimeUtc))
+            {
+                var h = SectorMap.TryReadHeader(map.FullName);
+                if (h is not { } hdr || hdr.Count != disc.TotalSectors || hdr.SectorSize != disc.SectorSize) continue;
+                string image = map.FullName[..^4];
+                if (!File.Exists(image)) continue;
+                string json = image + ".json";
+                if (File.Exists(json))
+                {
+                    var info = System.Text.Json.JsonSerializer.Deserialize<DiscInfo>(File.ReadAllText(json));
+                    if (info != null && disc.VolumeLabel.Length > 0 && info.VolumeLabel != disc.VolumeLabel) continue;
+                }
+                return image;
+            }
+        }
+        catch { }
+        return null;
     }
 
     // =====================================================================
@@ -237,6 +277,7 @@ public partial class MainWindow : Window
         }
         catch { /* folder may not exist yet */ }
 
+        _previewMap = null;
         if (resume && _disc != null)
         {
             try
@@ -244,14 +285,15 @@ public partial class MainWindow : Window
                 var map = SectorMap.Load(path + ".map");
                 if (map.Count == _disc.TotalSectors)
                 {
-                    Disc.Render(map, 0);
+                    _previewMap = map;
                     RetryButton.IsEnabled = map.CountOf(SectorState.Bad) > 0;
                     ShowStats(map, null);
                 }
             }
             catch { }
         }
-        else if (_disc != null) Disc.Render(null, 0);
+        if (_disc != null && _image == null) Disc.Render(_previewMap, 0);
+        RefreshTreeStatus();
     }
 
     private void ChooseFolder_Click(object sender, RoutedEventArgs e)
@@ -288,7 +330,8 @@ public partial class MainWindow : Window
         catch { }
 
         _detectVersion++;
-        CloseLiveContent();
+        CloseLiveContent(clearTree: false);
+        AppSettings.Save(new AppSettings { Folder = FolderBox.Text.Trim(), VideoFolder = VideoFolderBox.Text.Trim() });
         if (_fs?.Source is DiscImage img && string.Equals(img.Path, path, StringComparison.OrdinalIgnoreCase)) { CloseImage(); ShowContent(null, "", null); }
 
         ScsiOpticalDevice? dev = null;
@@ -342,6 +385,8 @@ public partial class MainWindow : Window
         }
 
         AddLog(finalMessage);
+        _previewMap = engine.Map;
+        RefreshTreeStatus();
         bool complete = engine.IsComplete;
         Disc.SetMode(complete ? DiscViewMode.Done : DiscViewMode.Idle, _disc?.VolumeLabel ?? "");
         Disc.Render(engine.Map, engine.Stats.CurrentLba);
@@ -370,6 +415,7 @@ public partial class MainWindow : Window
         if (engine == null) return;
         ShowStats(engine.Map, engine.Stats);
         Disc.Render(engine.Map, engine.Stats.CurrentLba);
+        if (++_treeTick % 5 == 0) RefreshTreeStatus();
     }
 
     private void ShowStats(SectorMap map, RescueStats? stats)
@@ -415,6 +461,10 @@ public partial class MainWindow : Window
     private void ShowContent(IsoFileSystem? fs, string source, string? error)
     {
         FileTree.ItemsSource = null;
+        _rootNode = null;
+        _filesByExtent = new();
+        FileInfoCard.Visibility = Visibility.Collapsed;
+        Disc.SetHighlight([]);
         ContentSource.Text = source;
         ContentSummary.Text = "";
         if (fs == null)
@@ -426,6 +476,9 @@ public partial class MainWindow : Window
         }
         ContentEmpty.Visibility = Visibility.Collapsed;
         var root = new FileNode(fs.Root, fs.Source.KnowsDamage);
+        _rootNode = root;
+        _filesByExtent = fs.Files.Where(f => f.SectorCount > 0).OrderBy(f => f.Extent).ToList();
+        root.Refresh(StatusMap);
         FileTree.ItemsSource = root.Children;
         var files = fs.Files.ToList();
         int dirs = fs.Root.Descendants().Count(d => d.IsDirectory);
@@ -458,7 +511,7 @@ public partial class MainWindow : Window
         var dlg = new OpenFileDialog { Filter = "Disc images (*.bin;*.iso)|*.bin;*.iso|All files|*.*", InitialDirectory = Directory.Exists(FolderBox.Text) ? FolderBox.Text : null };
         if (dlg.ShowDialog(this) == true)
         {
-            CloseLiveContent();
+            CloseLiveContent(clearTree: true);
             LoadImage(dlg.FileName);
         }
     }
@@ -578,7 +631,7 @@ public partial class MainWindow : Window
     private async void FileTree_DoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (FileTree.SelectedItem is not FileNode { Entry.IsDirectory: false } node || _fs == null || _contentBusy) return;
-        if (_fs.Source is LiveDiscSource && _engine != null) return;
+        if (_fs.Source is LiveDiscSource && _liveDevice == null) { MessageBox.Show(this, Loc.T("RescueFirst"), "DVD 360"); return; }
         var fs = _fs;
         string dir = Path.Combine(Path.GetTempPath(), "DVD360", Guid.NewGuid().ToString("N")[..8]);
         string file = Path.Combine(dir, node.Entry.OutputName);
@@ -589,6 +642,71 @@ public partial class MainWindow : Window
             return file;
         });
         if (File.Exists(file)) Process.Start(new ProcessStartInfo(file) { UseShellExecute = true });
+    }
+
+    // ---- content status on the disc
+
+    private void RefreshTreeStatus()
+    {
+        if (_rootNode == null) return;
+        _rootNode.Refresh(StatusMap);
+        if (FileTree.SelectedItem is FileNode n) ShowFileInfo(n);
+    }
+
+    private void FileTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
+    {
+        if (e.NewValue is FileNode n)
+        {
+            Disc.SetHighlight(n.Ranges());
+            ShowFileInfo(n);
+        }
+        else
+        {
+            Disc.SetHighlight([]);
+            FileInfoCard.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void ShowFileInfo(FileNode n)
+    {
+        FileInfoCard.Visibility = Visibility.Visible;
+        FileInfoName.Text = n.Icon + "  " + (n.Entry.IsDirectory ? n.Entry.FullPath : n.Name);
+        string where = n.Entry.SectorCount > 0 && !n.Entry.IsDirectory ? $"  •  LBA {n.Entry.Extent:N0}–{n.Entry.Extent + n.Entry.SectorCount - 1:N0}" : "";
+        FileInfoState.Text = (n.StateText.Length > 0 ? n.StateText : Loc.T("StateUnknown")) + where;
+        FileInfoState.Foreground = n.StateBrush;
+    }
+
+    private IsoEntry? FileAt(long lba)
+    {
+        int lo = 0, hi = _filesByExtent.Count - 1, found = -1;
+        while (lo <= hi)
+        {
+            int mid = (lo + hi) / 2;
+            if (_filesByExtent[mid].Extent <= lba) { found = mid; lo = mid + 1; } else hi = mid - 1;
+        }
+        if (found < 0) return null;
+        var f = _filesByExtent[found];
+        return lba < f.Extent + f.SectorCount ? f : null;
+    }
+
+    private void Disc_SectorHovered(long? lba)
+    {
+        if (lba == null || (_disc == null && _image == null)) { Disc.HoverContent = null; return; }
+        var file = FileAt(lba.Value);
+        string head = file != null ? (file.Parent?.Parent == null ? file.OutputName : file.Parent.FullPath + "\\" + file.OutputName) : Loc.T("NoFileHere");
+        string state = "";
+        var map = StatusMap;
+        if (file != null && map != null)
+        {
+            var t = map.Summarize(file.Extent, file.SectorCount);
+            long total = Math.Max(1, t.Ok + t.Bad + t.Retry + t.Pending);
+            state = $"\n%{100.0 * t.Ok / total:0.#} {Loc.T("LegendOk")}" + (t.Bad > 0 ? $", {Loc.T("StateBad", t.Bad)}" : "") + (t.Retry > 0 ? $", {Loc.T("LegendRetry")} {t.Retry}" : "");
+        }
+        else if (map != null && lba.Value < map.Count)
+        {
+            state = "\n" + Loc.T("SectorState_" + map[lba.Value]);
+        }
+        Disc.HoverContent = $"{head}\nLBA {lba:N0}{state}";
     }
 
     // =====================================================================
@@ -756,6 +874,7 @@ public partial class MainWindow : Window
             _rescueCts?.Cancel();
         }
         _videoCts?.Cancel();
+        AppSettings.Save(new AppSettings { Folder = FolderBox.Text.Trim(), VideoFolder = VideoFolderBox.Text.Trim() });
         _liveDevice?.Dispose();
         _image?.Dispose();
     }

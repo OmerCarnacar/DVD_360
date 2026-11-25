@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows.Media;
+using Dvd360.Core;
 using Dvd360.Core.Iso9660;
 
 namespace Dvd360.App;
@@ -20,38 +21,73 @@ public abstract class Observable : INotifyPropertyChanged
 public sealed class FileNode : Observable
 {
     private bool _expanded;
+    private string _stateText = "";
+    private Brush _stateBrush = MutedBrush;
 
     public FileNode(IsoEntry entry, bool knowsDamage)
     {
         Entry = entry;
+        KnowsDamage = knowsDamage;
         foreach (var c in entry.Children) Children.Add(new FileNode(c, knowsDamage));
-        if (entry.IsDirectory)
-        {
-            int bad = entry.Descendants().Count(d => !d.IsDirectory && d.BadSectors > 0);
-            StateText = !knowsDamage ? "" : bad == 0 ? "✔" : $"⚠ {bad}";
-            StateBrush = bad == 0 ? OkBrush : BadBrush;
-            _expanded = entry.Parent?.Parent == null;
-        }
-        else
-        {
-            StateText = !knowsDamage ? Loc.T("StateUnknown") : entry.BadSectors == 0 ? "✔ " + Loc.T("StateOk") : "⚠ " + Loc.T("StateBad", entry.BadSectors);
-            StateBrush = !knowsDamage ? MutedBrush : entry.BadSectors == 0 ? OkBrush : BadBrush;
-        }
+        _expanded = entry.IsDirectory && entry.Parent?.Parent == null;
+        Refresh(null);
     }
 
-    private static readonly Brush OkBrush = new SolidColorBrush(Color.FromRgb(0x2E, 0xD5, 0x73));
-    private static readonly Brush BadBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0x4D, 0x5E));
-    private static readonly Brush MutedBrush = new SolidColorBrush(Color.FromRgb(0x8C, 0x97, 0xAB));
+    public static readonly Brush OkBrush = Frozen(0x2E, 0xD5, 0x73), BadBrush = Frozen(0xFF, 0x4D, 0x5E),
+        RetryBrush = Frozen(0xFF, 0xB0, 0x20), MutedBrush = Frozen(0x8C, 0x97, 0xAB), PendingBrush = Frozen(0xC9, 0xD1, 0xDC);
+
+    private static Brush Frozen(byte r, byte g, byte b) { var x = new SolidColorBrush(Color.FromRgb(r, g, b)); x.Freeze(); return x; }
 
     public IsoEntry Entry { get; }
+    public bool KnowsDamage { get; }
     public ObservableCollection<FileNode> Children { get; } = new();
     public string Name => Entry.IsDirectory ? Entry.Name : Entry.OutputName;
     public string Icon => Entry.IsDirectory ? "📁" : Entry.IsForm2 || MainWindow.IsVideo(Entry.Name) ? "🎬"
         : MainWindow.IsImage(Entry.Name) ? "🖼️" : "📄";
     public string SizeText => Entry.IsDirectory ? "" : MainWindow.FormatBytes(Entry.DataSize);
-    public string StateText { get; }
-    public Brush StateBrush { get; }
+    public string StateText { get => _stateText; private set => Set(ref _stateText, value); }
+    public Brush StateBrush { get => _stateBrush; private set => Set(ref _stateBrush, value); }
     public bool IsExpanded { get => _expanded; set => Set(ref _expanded, value); }
+
+    /// <summary>Totals of the last refresh, in sectors.</summary>
+    public (long Ok, long Bad, long Retry, long Pending) Totals { get; private set; }
+
+    /// <summary>Recomputes this node's state from the sector map (null = use what the file system knows).</summary>
+    public (long Ok, long Bad, long Retry, long Pending) Refresh(SectorMap? map)
+    {
+        (long Ok, long Bad, long Retry, long Pending) t = default;
+        if (Entry.IsDirectory)
+        {
+            foreach (var c in Children)
+            {
+                var x = c.Refresh(map);
+                t = (t.Ok + x.Ok, t.Bad + x.Bad, t.Retry + x.Retry, t.Pending + x.Pending);
+            }
+        }
+        else if (map != null) t = map.Summarize(Entry.Extent, Entry.SectorCount);
+        else if (KnowsDamage) t = (Entry.SectorCount - Entry.BadSectors, Entry.BadSectors, 0, 0);
+        Totals = t;
+
+        long total = t.Ok + t.Bad + t.Retry + t.Pending;
+        if (map == null && !KnowsDamage) { StateText = Entry.IsDirectory ? "" : Loc.T("StateUnknown"); StateBrush = MutedBrush; }
+        else if (total == 0) { StateText = Entry.IsDirectory ? "" : "✔ " + Loc.T("StateOk"); StateBrush = OkBrush; }
+        else if (t.Ok == total) { StateText = "✔ " + Loc.T("StateOk"); StateBrush = OkBrush; }
+        else
+        {
+            double pct = 100.0 * t.Ok / total;
+            StateText = t.Bad > 0 ? $"⚠ {Loc.T("StateBad", t.Bad)} • %{pct:0.#}"
+                : t.Retry > 0 ? $"%{pct:0.#} • {Loc.T("LegendRetry")} {t.Retry}"
+                : $"%{pct:0.#} {Loc.T("LegendOk")}";
+            StateBrush = t.Bad > 0 ? BadBrush : t.Retry > 0 ? RetryBrush : PendingBrush;
+        }
+        return t;
+    }
+
+    /// <summary>Sector ranges this node covers on the disc (a folder covers all its files).</summary>
+    public IEnumerable<(long Start, long Count)> Ranges() =>
+        Entry.IsDirectory
+            ? Entry.Descendants().Where(e => !e.IsDirectory && e.SectorCount > 0).Select(e => (e.Extent, e.SectorCount))
+            : Entry.SectorCount > 0 ? [(Entry.Extent, Entry.SectorCount)] : [];
 }
 
 public sealed class VideoItem : Observable

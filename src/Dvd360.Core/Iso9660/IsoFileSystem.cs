@@ -74,9 +74,10 @@ public sealed class IsoFileSystem
             bool any = false;
             for (long lba = start + 16; lba < start + 16 + 64 && lba < image.SectorCount; lba++)
             {
-                if (!image.IsGood(lba)) continue;
+                // The descriptor set must start exactly at start+16; if it is not there, this track has none.
+                if (!image.IsGood(lba)) { if (lba == start + 16) break; continue; }
                 image.ReadUserData(lba, buf, SectorKind.Mode2Form1);
-                if (buf[1] != 'C' || buf[2] != 'D' || buf[3] != '0' || buf[4] != '0' || buf[5] != '1') { if (any) break; continue; }
+                if (buf[1] != 'C' || buf[2] != 'D' || buf[3] != '0' || buf[4] != '0' || buf[5] != '1') { if (any || lba == start + 16) break; continue; }
                 any = true;
                 byte type = buf[0];
                 if (type == 255) break;
