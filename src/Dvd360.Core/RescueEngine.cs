@@ -17,6 +17,13 @@ public sealed class RescueOptions
     /// </summary>
     public bool AutoSlowDown { get; set; } = true;
     public int SlowSpeedMultiplier { get; set; } = 4;
+    /// <summary>
+    /// When a CD sector keeps arriving with a few wrong bytes (Video CD sectors have no error correction), take a
+    /// byte-by-byte majority vote over the copies; the result is accepted only if its checksum is right.
+    /// </summary>
+    public bool VoteOnCopies { get; set; } = true;
+    /// <summary>Before each retry read a sector far away, so the drive cannot hand back the same cached bad copy.</summary>
+    public bool BypassDriveCache { get; set; } = true;
     /// <summary>Check header address and EDC of every CD data sector ourselves.</summary>
     public bool VerifyCdSectors { get; set; } = true;
 }
@@ -57,6 +64,8 @@ public sealed class RescueEngine
     private DateTime _lastSave;
     private long _okBytesThisRun;
     private readonly Queue<bool> _recentErrors = new();
+    private ReadOutcome _lastOutcome;
+    private byte[]? _scratch;
     private bool _slowedDown;
     /// <summary>Sorted, merged [Start, End) ranges this run works on (whole disc by default).</summary>
     private List<(long Start, long End)> _scope = new();
@@ -278,7 +287,8 @@ public sealed class RescueEngine
         Emit(pass == RescuePass.RetryBad
             ? CoreText.L($"{total:N0} bozuk sektör yeniden deneniyor, her biri {_options.Retries} kez", $"Retrying {total:N0} bad sectors, {_options.Retries} tries each")
             : CoreText.L($"3. geçiş: sektör sektör, {total:N0} sektör, her biri en çok {_options.Retries} kez", $"Pass 3: sector by sector, {total:N0} sectors, up to {_options.Retries} tries each"));
-        long done = 0, rescued = 0;
+        long done = 0, rescued = 0, voted = 0;
+        var copies = new List<byte[]>();
         foreach (var (rangeStart, rangeEnd) in _scope)
         for (long lba = rangeStart; ; lba++)
         {
@@ -288,10 +298,15 @@ public sealed class RescueEngine
             for (int attempt = 0; attempt < Math.Max(1, _options.Retries); attempt++)
             {
                 ct.ThrowIfCancellationRequested();
+                if (attempt > 0) BypassCache(lba);
                 ReadBlock(lba, 1, out _, failState: target);
                 if (Map[lba] != target) break;
+                // the drive returned data, but our checksum says it is wrong: keep the copy for voting
+                if (_lastOutcome == ReadOutcome.Ok && copies.Count < 16) copies.Add(_buffer.AsSpan(0, Info.SectorSize).ToArray());
                 tick();
             }
+            if (Map[lba] == target && copies.Count >= 3 && TryVote(lba, copies)) voted++;
+            copies.Clear();
             if (Map[lba] == SectorState.Ok) rescued++;
             if (Map[lba] == target) Map.Set(lba, SectorState.Bad);
             done++;
@@ -299,6 +314,54 @@ public sealed class RescueEngine
             tick();
         }
         Emit(CoreText.L($"  Bu geçişte {total:N0} sektörden {rescued:N0} tanesi kurtarıldı", $"  {rescued:N0} of {total:N0} sectors rescued in this pass"));
+        if (voted > 0) Emit(CoreText.L($"  {voted:N0} sektör çoklu okuma oylamasıyla onarıldı", $"  {voted:N0} sectors repaired by voting over several reads"));
+    }
+
+    /// <summary>Reads one sector far from <paramref name="lba"/> so the next read really goes to the disc.</summary>
+    private void BypassCache(long lba)
+    {
+        if (!_options.BypassDriveCache || Map.Count < 2) return;
+        long far = (lba + Map.Count / 2) % Map.Count;
+        _scratch ??= new byte[Info.SectorSize];
+        _device.Read(far, 1, _scratch); // result does not matter
+    }
+
+    /// <summary>
+    /// Byte-by-byte majority over several imperfect copies of one sector. Different reads usually get different bytes
+    /// wrong, so the majority is often the true sector. Accepted only if the CD checksum (EDC) then matches.
+    /// </summary>
+    private bool TryVote(long lba, List<byte[]> copies)
+    {
+        if (!_options.VoteOnCopies || !Info.IsCd || !_options.VerifyCdSectors) return false;
+        var voted = MajorityVote(copies);
+        bool good = CdSector.Verify(voted, lba);
+        // even if it does not verify, the voted copy is the best guess we have (fewer wrong bytes in a video)
+        _image!.Position = lba * Info.SectorSize;
+        _image.Write(voted);
+        if (!good) return false;
+        Map.Set(lba, SectorState.Ok);
+        _okBytesThisRun += Info.SectorSize;
+        return true;
+    }
+
+    internal static byte[] MajorityVote(IReadOnlyList<byte[]> copies)
+    {
+        int n = copies[0].Length;
+        var result = new byte[n];
+        Span<int> counts = stackalloc int[256];
+        for (int i = 0; i < n; i++)
+        {
+            counts.Clear();
+            byte best = copies[0][i];
+            int bestCount = 0;
+            foreach (var c in copies)
+            {
+                int k = ++counts[c[i]];
+                if (k > bestCount) { bestCount = k; best = c[i]; }
+            }
+            result[i] = best;
+        }
+        return result;
     }
 
     /// <summary>Watches the last 20 block reads and slows the drive down when most of them fail.</summary>
@@ -325,6 +388,7 @@ public sealed class RescueEngine
         int size = Info.SectorSize;
         var data = _buffer.AsSpan(0, count * size);
         var outcome = _device.Read(lba, count, data);
+        _lastOutcome = outcome;
 
         if (outcome == ReadOutcome.NoMedia)
         {

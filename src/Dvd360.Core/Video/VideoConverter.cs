@@ -5,6 +5,8 @@ using System.Text.RegularExpressions;
 
 namespace Dvd360.Core.Video;
 
+public enum AudioFormat { Mp3, Flac, Wav }
+
 public enum VideoQuality
 {
     /// <summary>Same resolution, cleaned up (deinterlace + light denoise).</summary>
@@ -29,7 +31,10 @@ public static partial class VideoConverter
 {
     public const string FfmpegDownloadUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip";
 
-    public static string ToolsFolder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DVD360", "ffmpeg");
+    /// <summary>Set by the app in portable mode, so FFmpeg lives next to the program.</summary>
+    public static string? ToolsFolderOverride { get; set; }
+
+    public static string ToolsFolder => ToolsFolderOverride ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DVD360", "ffmpeg");
 
     /// <summary>Finds ffmpeg.exe next to the program, in our tools folder, or on PATH.</summary>
     public static string? FindFfmpeg()
@@ -170,6 +175,36 @@ public static partial class VideoConverter
             throw new IOException($"FFmpeg failed (exit code {p.ExitCode}).");
         }
         progress?.Report(1);
+    }
+
+    public static string Extension(AudioFormat f) => f switch { AudioFormat.Mp3 => ".mp3", AudioFormat.Flac => ".flac", _ => ".wav" };
+
+    public static IReadOnlyList<string> BuildAudioArguments(string input, string output, AudioFormat format)
+    {
+        var a = new List<string> { "-hide_banner", "-y", "-nostdin", "-fflags", "+genpts+discardcorrupt", "-err_detect", "ignore_err", "-probesize", "200M", "-analyzeduration", "200M" };
+        if (Path.GetExtension(input).ToLowerInvariant() is ".mpg" or ".mpeg" or ".dat" or ".vob") a.AddRange(["-f", "mpeg"]);
+        a.AddRange(["-i", input, "-vn", "-map", "0:a:0"]);
+        a.AddRange(format switch
+        {
+            AudioFormat.Mp3 => ["-c:a", "libmp3lame", "-q:a", "0"],            // VBR, ~245 kbit/s
+            AudioFormat.Flac => ["-c:a", "flac", "-compression_level", "8"],     // lossless
+            _ => ["-c:a", "pcm_s16le"],
+        });
+        a.Add(output);
+        return a;
+    }
+
+    /// <summary>Saves only the sound of a video, or converts a WAV, to MP3 / FLAC / WAV.</summary>
+    public static async Task ConvertAudioAsync(string ffmpeg, string input, string output, AudioFormat format, CancellationToken ct)
+    {
+        var psi = new ProcessStartInfo(ffmpeg) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true };
+        foreach (var arg in BuildAudioArguments(input, output, format)) psi.ArgumentList.Add(arg);
+        using var p = Process.Start(psi)!;
+        _ = p.StandardError.ReadToEndAsync(CancellationToken.None);
+        using (ct.Register(() => { try { p.Kill(true); } catch { } }))
+            await p.WaitForExitAsync(CancellationToken.None);
+        ct.ThrowIfCancellationRequested();
+        if (p.ExitCode != 0) throw new IOException($"FFmpeg failed on {Path.GetFileName(input)} (exit code {p.ExitCode}).");
     }
 
     [GeneratedRegex(@"Duration:\s*(\d{2}:\d{2}:\d{2}\.\d{2})")]

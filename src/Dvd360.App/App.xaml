@@ -164,6 +164,29 @@
             </Setter>
         </Style>
 
+        <!-- dark tooltips (the disc hover info and button hints); the default light one made white text unreadable -->
+        <Style TargetType="ToolTip">
+            <Setter Property="Foreground" Value="{StaticResource Text}"/>
+            <Setter Property="Background" Value="#1E2740"/>
+            <Setter Property="BorderBrush" Value="#3B4A6B"/>
+            <Setter Property="Padding" Value="10,7"/>
+            <Setter Property="MaxWidth" Value="380"/>
+            <Setter Property="HasDropShadow" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToolTip">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                                CornerRadius="8" Padding="{TemplateBinding Padding}" Margin="0,0,8,8">
+                            <Border.Effect>
+                                <DropShadowEffect BlurRadius="14" ShadowDepth="3" Opacity="0.5" Color="Black"/>
+                            </Border.Effect>
+                            <ContentPresenter TextElement.Foreground="{TemplateBinding Foreground}" TextElement.FontSize="13"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style TargetType="ProgressBar">
             <Setter Property="Height" Value="10"/>
             <Setter Property="Foreground" Value="{StaticResource OkBrush}"/>

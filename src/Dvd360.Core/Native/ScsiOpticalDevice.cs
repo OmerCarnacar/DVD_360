@@ -201,6 +201,33 @@ public sealed unsafe class ScsiOpticalDevice : ISectorDevice
         return Exec([0xBB, 0, (byte)(kbPerSecond >> 8), (byte)kbPerSecond, 0xFF, 0xFF, 0, 0, 0, 0, 0, 0], 0, out _).Success;
     }
 
+    /// <summary>START STOP UNIT with LoEj: opens the tray.</summary>
+    public bool Eject()
+    {
+        Exec([0x1E, 0, 0, 0, 0, 0], 0, out _);           // allow medium removal
+        return Exec([0x1B, 0, 0, 0, 0x02, 0], 0, out _, 30).Success;
+    }
+
+    /// <summary>Closes the tray (drives with a motorised tray).</summary>
+    public static bool Load(string driveLetter)
+    {
+        try { using var d = OpenRaw(driveLetter); return d.Exec([0x1B, 0, 0, 0, 0x03, 0], 0, out _, 30).Success; } catch { return false; }
+    }
+
+    /// <summary>Opens the tray of a drive without keeping it open.</summary>
+    public static bool Eject(string driveLetter)
+    {
+        try { using var d = OpenRaw(driveLetter); return d.Eject(); } catch { return false; }
+    }
+
+    private static ScsiOpticalDevice OpenRaw(string driveLetter)
+    {
+        string letter = driveLetter.TrimEnd(':', '\\').ToUpperInvariant();
+        var h = CreateFile($@"\\.\{letter}:", 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
+        if (h.IsInvalid) { h.Dispose(); throw new IOException("Cannot open drive " + letter); }
+        return new ScsiOpticalDevice(h);
+    }
+
     // ---------------------------------------------------------------- pass-through plumbing
 
     private readonly record struct ScsiResult(bool IoctlOk, int Win32Error, byte ScsiStatus, byte SenseKey, byte Asc, byte Ascq)

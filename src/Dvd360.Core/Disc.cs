@@ -42,6 +42,8 @@ public interface ISectorDevice : IDisposable
     ReadOutcome Read(long lba, int count, Span<byte> destination);
     /// <summary>Sets read speed as a multiple of 1x (0 = maximum). Best effort.</summary>
     bool SetReadSpeed(int multiplier);
+    /// <summary>Opens the tray. Best effort.</summary>
+    bool Eject() => false;
 }
 
 public sealed class NoMediaException(string message) : Exception(message);

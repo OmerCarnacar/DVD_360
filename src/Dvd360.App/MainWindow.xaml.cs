@@ -48,6 +48,7 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<VideoItem> _videos = new();
     private CancellationTokenSource? _videoCts;
 
+    private bool _quiet; // inside "one-click": no message boxes, finish actions only at the very end
     private readonly DispatcherTimer _uiTimer = new() { Interval = TimeSpan.FromMilliseconds(300) };
     private readonly DispatcherTimer _deviceDebounce = new() { Interval = TimeSpan.FromMilliseconds(900) };
 
@@ -67,7 +68,7 @@ public partial class MainWindow : Window
         _deviceDebounce.Tick += (_, _) => { _deviceDebounce.Stop(); RefreshDrives(); };
         UpdateFfmpegStatus();
         ShowContent(null, "", null);
-        Loaded += (_, _) => RefreshDrives();
+        Loaded += (_, _) => { RefreshDrives(); _ = CheckForUpdateAsync(); };
         Closing += OnClosing;
     }
 
@@ -262,7 +263,7 @@ public partial class MainWindow : Window
         if (_engine != null) return;
         string? path = TargetPath();
         bool resume = path != null && File.Exists(path) && File.Exists(path + ".map");
-        StartButton.Content = ModeSelected.IsChecked == true ? Loc.T("RescueSelected") : Loc.T(resume ? "Continue" : "Start");
+        StartButton.Content = ModeSelected.IsChecked == true ? Loc.T("RescueSelected") : ModeMedia.IsChecked == true ? Loc.T("RescueMediaButton") : Loc.T(resume ? "Continue" : "Start");
         RetryButton.IsEnabled = false;
         SpaceText.Text = "";
         if (path == null) return;
@@ -305,6 +306,7 @@ public partial class MainWindow : Window
     private void Start_Click(object sender, RoutedEventArgs e)
     {
         if (ModeSelected.IsChecked == true) RescueSelected_Click(sender, e);
+        else if (ModeMedia.IsChecked == true) _ = RescueMediaAsync();
         else _ = RunRescueAsync(retryBad: false);
     }
 
@@ -324,7 +326,9 @@ public partial class MainWindow : Window
     private void Mode_Changed(object sender, RoutedEventArgs e)
     {
         if (!IsLoaded) return;
-        StartButton.Content = ModeSelected.IsChecked == true ? Loc.T("RescueSelected") : Loc.T(StartButton.Content as string == Loc.T("Continue") ? "Continue" : "Start");
+        StartButton.Content = ModeSelected.IsChecked == true ? Loc.T("RescueSelected") : ModeMedia.IsChecked == true ? Loc.T("RescueMediaButton")
+            : Loc.T(StartButton.Content as string == Loc.T("Continue") ? "Continue" : "Start");
+        if (ModeMedia.IsChecked == true) Disc.SetHighlight(MediaRanges(includeMetadata: false));
         if (ModeWhole.IsChecked == true) { Disc.SetHighlight([]); UpdateTarget(); }
         UpdateSelectionText();
     }
@@ -458,6 +462,7 @@ public partial class MainWindow : Window
         {
             _uiTimer.Stop();
             UpdateRescueUi();
+            Taskbar.ProgressState = System.Windows.Shell.TaskbarItemProgressState.None;
             dev.Dispose();
             _engine = null;
             _rescueCts.Dispose();
@@ -493,8 +498,11 @@ public partial class MainWindow : Window
                 if (await CreateIso(done, iso)) AddLog(Loc.T("IsoSavedTo", iso));
             }
         }
-        if (error) Warn(finalMessage);
-        else MessageBox.Show(this, finalMessage, "DVD 360", MessageBoxButton.OK, engine.BadSectors == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        if (ok) WriteReport(path, engine.Info, engine.Map, open: false);
+        if (_quiet) return ok;
+        if (error) { Warn(finalMessage); return ok; }
+        if (ok) await FinishedAsync(Loc.T("RescueDoneTitle"), finalMessage!, discJob: true);
+        else MessageBox.Show(this, finalMessage, "DVD 360", MessageBoxButton.OK, MessageBoxImage.Information);
         return ok;
     }
 
@@ -539,6 +547,8 @@ public partial class MainWindow : Window
 
     private void SetRescueBusy(bool busy)
     {
+        OneClickButton.IsEnabled = !busy && !_quiet;
+        ReportButton.IsEnabled = !busy;
         RescueSelectedButton.IsEnabled = !busy;
         RescueIsoButton.IsEnabled = !busy;
         StartButton.IsEnabled = !busy;
@@ -551,6 +561,11 @@ public partial class MainWindow : Window
     {
         var engine = _engine;
         if (engine == null) return;
+        long useful = Math.Max(1, engine.Map.Count - engine.SkippedSectors);
+        Taskbar.ProgressState = engine.Map.CountOf(SectorState.NeedsRetry) + engine.BadSectors > useful / 10
+            ? System.Windows.Shell.TaskbarItemProgressState.Paused   // yellow: many errors
+            : System.Windows.Shell.TaskbarItemProgressState.Normal;
+        Taskbar.ProgressValue = (double)engine.OkSectors / useful;
         ShowStats(engine.Map, engine.Stats);
         if (_scopeRanges != null)
         {
@@ -813,6 +828,116 @@ public partial class MainWindow : Window
         if (File.Exists(file)) Process.Start(new ProcessStartInfo(file) { UseShellExecute = true });
     }
 
+    // ---- rescue only videos and music
+
+    private static bool IsMediaFile(IsoEntry f) => f.IsForm2 || IsVideo(f.Name) || IsAudio(f.Name);
+    internal static bool IsAudio(string name) => Path.GetExtension(name).ToLowerInvariant() is ".mp3" or ".wav" or ".wma" or ".flac" or ".m4a" or ".ogg" or ".aac" or ".mp2";
+
+    /// <summary>Sectors of all video/music files and audio-CD tracks (plus the file system, so files can be found later).</summary>
+    private List<(long Start, long Count)> MediaRanges(bool includeMetadata)
+    {
+        var ranges = new List<(long Start, long Count)>();
+        if (_fs != null)
+        {
+            ranges.AddRange(_fs.Files.Where(IsMediaFile).Select(f => (f.Extent, f.SectorCount)));
+            if (includeMetadata && ranges.Count > 0) ranges.AddRange(_fs.MetadataRanges());
+        }
+        if (_disc != null) ranges.AddRange(AudioTracks.Find(_disc).Select(t => (t.StartLba, t.Sectors)));
+        return ranges;
+    }
+
+    private async Task RescueMediaAsync()
+    {
+        if (_disc == null) { Warn(Loc.T("InsertDisc")); return; }
+        var ranges = MediaRanges(includeMetadata: true);
+        if (ranges.Count == 0) { Warn(Loc.T("NoMedia")); return; }
+        AddLog(Loc.T("MediaStart", FormatBytes(ranges.Sum(r => r.Count) * _disc.SectorSize)));
+        bool quiet = _quiet;
+        _quiet = true;
+        string summary;
+        try
+        {
+            if (!await RunRescueAsync(retryBad: false, ranges)) return;
+            string image = TargetPath()!;
+            LoadImage(image);
+            string baseDir = Path.Combine(Path.GetDirectoryName(image)!, Path.GetFileNameWithoutExtension(image));
+            int songs = 0;
+            AddDiscVideos(switchTab: false);
+            if (_image != null && AudioTracks.Find(_image.Info).Count > 0)
+                songs = await ExportAudioAsync(_image, Path.Combine(baseDir, Loc.T("MusicFolder")), SelectedAudioFormat());
+            if (_fs != null)
+            {
+                var musicFiles = _fs.Files.Where(f => IsAudio(f.Name)).ToList();
+                if (musicFiles.Count > 0)
+                {
+                    var fs = _fs;
+                    await RunContentTask((p, ct) => { fs.Extract(musicFiles, Path.Combine(baseDir, Loc.T("MusicFolder")), p, ct); return ""; });
+                    songs += musicFiles.Count;
+                }
+            }
+            int videos = _videos.Count(v => !v.Done);
+            Tabs.SelectedIndex = videos > 0 ? 2 : 0;
+            summary = Loc.T("MediaDone", videos, songs);
+        }
+        finally { _quiet = quiet; }
+        if (!_quiet) await FinishedAsync(Loc.T("RescueDoneTitle"), summary, discJob: true);
+    }
+
+    private AudioFormat SelectedAudioFormat() => (AudioFormat)Math.Max(0, AudioFormatBox.SelectedIndex);
+
+    private async void AudioOnly_Click(object sender, RoutedEventArgs e)
+    {
+        if (_videoCts != null) return;
+        string? ffmpeg = VideoConverter.FindFfmpeg();
+        if (ffmpeg == null) { Warn(Loc.T("FfmpegMissing")); return; }
+        var items = VideoList.SelectedItem is VideoItem sel ? [sel] : _videos.ToList();
+        if (items.Count == 0) { Warn(Loc.T("NoVideosInList")); return; }
+        string outDir = VideoFolderBox.Text.Trim();
+        Directory.CreateDirectory(outDir);
+        _videoCts = new CancellationTokenSource();
+        AudioOnlyButton.IsEnabled = ConvertButton.IsEnabled = false;
+        StopVideoButton.IsEnabled = true;
+        int ok = 0;
+        try
+        {
+            foreach (var v in items)
+            {
+                string? temp = null;
+                try
+                {
+                    string input = v.FilePath ?? "";
+                    var parts = v.Parts ?? (v.Entry != null ? [v.Entry] : null);
+                    if (parts != null && v.FileSystem != null)
+                    {
+                        v.Status = Loc.T("Preparing", "");
+                        temp = Path.Combine(outDir, "~" + Guid.NewGuid().ToString("N")[..6] + (v.Parts != null ? ".vob" : Path.GetExtension(parts[0].OutputName)));
+                        var fs = v.FileSystem; var ct = _videoCts.Token;
+                        await Task.Run(() => { using var o = File.Create(temp); foreach (var part in parts) fs.CopyFile(part, o, ct); }, ct);
+                        input = temp;
+                    }
+                    string output = UniquePath(Path.Combine(outDir, IsoFileSystem.Sanitize(Path.GetFileNameWithoutExtension(v.Name)) + ".mp3"));
+                    v.Status = Loc.T("Converting", "MP3");
+                    await VideoConverter.ConvertAudioAsync(ffmpeg, input, output, AudioFormat.Mp3, _videoCts.Token);
+                    v.Status = "♪ " + Path.GetFileName(output);
+                    ok++;
+                }
+                catch (OperationCanceledException) { v.Status = Loc.T("Stopped"); throw; }
+                catch (Exception ex) { v.Status = Loc.T("VideoFailed"); AddLog(ex.Message); }
+                finally { if (temp != null) try { File.Delete(temp); } catch { } }
+            }
+        }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            _videoCts.Dispose();
+            _videoCts = null;
+            AudioOnlyButton.IsEnabled = ConvertButton.IsEnabled = true;
+            StopVideoButton.IsEnabled = false;
+        }
+        AddLog(Loc.T("Mp3Done", ok, outDir));
+        if (ok > 0 && Directory.Exists(outDir)) Process.Start("explorer.exe", $"\"{outDir}\"");
+    }
+
     // ---- rescue only the picked files
 
     private void SelectAll_Click(object sender, RoutedEventArgs e) { foreach (var n in _rootNode?.Children ?? []) n.IsChecked = true; }
@@ -916,7 +1041,9 @@ public partial class MainWindow : Window
         {
             var t = map.Summarize(file.Extent, file.SectorCount);
             long total = Math.Max(1, t.Ok + t.Bad + t.Retry + t.Pending);
-            state = $"\n%{100.0 * t.Ok / total:0.#} {Loc.T("LegendOk")}" + (t.Bad > 0 ? $", {Loc.T("StateBad", t.Bad)}" : "") + (t.Retry > 0 ? $", {Loc.T("LegendRetry")} {t.Retry}" : "");
+            long errors = t.Bad + t.Retry;
+            double pct = 100.0 * t.Ok / total;
+            state = "\n" + (errors > 0 ? Loc.T("FileFillErr", pct, errors) : Loc.T("FileFill", pct));
         }
         else if (map != null && lba.Value < map.Count)
         {
@@ -960,7 +1087,26 @@ public partial class MainWindow : Window
     private void AddDiscVideos(bool switchTab)
     {
         if (_fs == null) return;
-        foreach (var f in _fs.Files.Where(f => f.IsForm2 || IsVideo(f.Name)))
+        // DVD-Video: each title is VTS_xx_1.VOB, VTS_xx_2.VOB... (VTS_xx_0 is the menu) -> one video per title
+        var vobParts = new HashSet<IsoEntry>();
+        var titles = _fs.Files
+            .Select(f => (File: f, M: System.Text.RegularExpressions.Regex.Match(f.Name, @"^VTS_(\d\d)_([1-9])\.VOB$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)))
+            .Where(x => x.M.Success)
+            .GroupBy(x => x.M.Groups[1].Value)
+            .OrderBy(g => g.Key);
+        foreach (var t in titles)
+        {
+            var parts = t.OrderBy(x => int.Parse(x.M.Groups[2].Value)).Select(x => x.File).ToList();
+            vobParts.UnionWith(_fs.Files.Where(f => f.Name.StartsWith($"VTS_{t.Key}_", StringComparison.OrdinalIgnoreCase)));
+            string name = Loc.T("DvdTitle", int.Parse(t.Key));
+            if (_videos.Any(v => v.Parts != null && v.Name == name)) continue;
+            _videos.Add(new VideoItem
+            {
+                Name = name, Parts = parts, FileSystem = _fs,
+                Detail = $"{_fs.VolumeId} — {string.Join(" + ", parts.Select(p => p.Name))} — {FormatBytes(parts.Sum(p => p.DataSize))}",
+            });
+        }
+        foreach (var f in _fs.Files.Where(f => (f.IsForm2 || IsVideo(f.Name)) && !vobParts.Contains(f) && !f.Name.Equals("VIDEO_TS.VOB", StringComparison.OrdinalIgnoreCase)))
         {
             if (_videos.Any(v => v.Entry == f)) continue;
             if (_videos.Any(v => v.Entry != null && v.Name == f.OutputName && v.Detail.StartsWith(_fs.VolumeId))) continue;
@@ -1001,13 +1147,21 @@ public partial class MainWindow : Window
 
     private async void Convert_Click(object sender, RoutedEventArgs e)
     {
-        if (_videoCts != null) return;
-        string? ffmpeg = VideoConverter.FindFfmpeg();
-        if (ffmpeg == null) { Warn(Loc.T("FfmpegMissing")); return; }
-        var todo = _videos.Where(v => !v.Done).ToList();
-        if (todo.Count == 0) return;
         string outDir = VideoFolderBox.Text.Trim();
-        try { Directory.CreateDirectory(outDir); } catch (Exception ex) { Warn(ex.Message); return; }
+        var (done, total, cancelled) = await ConvertVideosAsync(outDir);
+        if (!cancelled && total > 0 && !_quiet)
+            await FinishedAsync(Loc.T("VideosDoneTitle"), Loc.T("VideosDone", done, total, outDir), discJob: false);
+    }
+
+    /// <summary>Converts every waiting video in the list. Returns how many succeeded.</summary>
+    private async Task<(int Done, int Total, bool Cancelled)> ConvertVideosAsync(string outDir)
+    {
+        if (_videoCts != null) return (0, 0, true);
+        string? ffmpeg = VideoConverter.FindFfmpeg();
+        if (ffmpeg == null) { Warn(Loc.T("FfmpegMissing")); return (0, 0, true); }
+        var todo = _videos.Where(v => !v.Done).ToList();
+        if (todo.Count == 0) return (0, 0, false);
+        try { Directory.CreateDirectory(outDir); } catch (Exception ex) { Warn(ex.Message); return (0, 0, true); }
 
         var quality = (VideoQuality)QualityBox.SelectedIndex;
         bool hevc = CodecBox.SelectedIndex == 1;
@@ -1015,43 +1169,56 @@ public partial class MainWindow : Window
         ConvertButton.IsEnabled = false;
         StopVideoButton.IsEnabled = true;
         string suffix = quality switch { VideoQuality.Hd720 => "_720p", VideoQuality.FullHd1080 => "_1080p", _ => "" };
+        int ok = 0, index = 0;
+        bool cancelled = false;
+        Taskbar.ProgressState = System.Windows.Shell.TaskbarItemProgressState.Normal;
         try
         {
             foreach (var v in todo)
             {
                 string? temp = null;
+                int i = index++;
                 try
                 {
                     string input = v.FilePath ?? "";
-                    if (v.Entry != null && v.FileSystem != null)
+                    var parts = v.Parts ?? (v.Entry != null ? [v.Entry] : null);
+                    if (parts != null && v.FileSystem != null)
                     {
                         v.Status = Loc.T("Preparing", "");
-                        temp = Path.Combine(outDir, "~" + Guid.NewGuid().ToString("N")[..6] + "_" + v.Entry.OutputName);
-                        var entry = v.Entry; var fs = v.FileSystem; var ct = _videoCts.Token;
-                        await Task.Run(() => { using var o = File.Create(temp); fs.CopyFile(entry, o, ct); }, ct);
+                        string ext = v.Parts != null ? ".vob" : Path.GetExtension(parts[0].OutputName);
+                        temp = Path.Combine(outDir, "~" + Guid.NewGuid().ToString("N")[..6] + "_" + Path.GetFileNameWithoutExtension(v.Name) + ext);
+                        var fs = v.FileSystem; var ct = _videoCts.Token;
+                        await Task.Run(() => { using var o = File.Create(temp); foreach (var part in parts) fs.CopyFile(part, o, ct); }, ct);
                         input = temp;
                     }
-                    string output = UniquePath(Path.Combine(outDir, Path.GetFileNameWithoutExtension(v.Name) + suffix + ".mp4"));
+                    string output = UniquePath(Path.Combine(outDir, IsoFileSystem.Sanitize(Path.GetFileNameWithoutExtension(v.Name)) + suffix + ".mp4"));
                     v.Status = Loc.T("Converting", "");
                     await VideoConverter.ConvertAsync(ffmpeg, new VideoJob { Input = input, Output = output, Quality = quality, UseHevc = hevc },
-                        new Progress<double>(p => { v.Progress = p; v.Status = $"{p * 100:N0}%"; }), m => Dispatcher.BeginInvoke(() => AddLog(m)), _videoCts.Token);
+                        new Progress<double>(p =>
+                        {
+                            v.Progress = p; v.Status = $"{p * 100:N0}%";
+                            Taskbar.ProgressValue = (i + p) / todo.Count;
+                        }), m => Dispatcher.BeginInvoke(() => AddLog(m)), _videoCts.Token);
                     v.Done = true;
                     v.Progress = 1;
                     v.Status = "✔ " + Path.GetFileName(output);
+                    ok++;
                 }
                 catch (OperationCanceledException) { v.Status = Loc.T("Stopped"); throw; }
                 catch (Exception ex) { v.Status = Loc.T("VideoFailed"); AddLog(ex.Message); }
                 finally { if (temp != null) try { File.Delete(temp); } catch { } }
             }
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { cancelled = true; }
         finally
         {
             _videoCts.Dispose();
             _videoCts = null;
             ConvertButton.IsEnabled = true;
             StopVideoButton.IsEnabled = false;
+            Taskbar.ProgressState = System.Windows.Shell.TaskbarItemProgressState.None;
         }
+        return (ok, todo.Count, cancelled);
     }
 
     private static string UniquePath(string path)
@@ -1071,6 +1238,234 @@ public partial class MainWindow : Window
         if (_disc == null) { DiscStatus.Text = Loc.T(_driveLetter == null ? "NoDrive" : "InsertDisc"); return; }
         DiscStatus.Text = "✔ " + Loc.T("DiscDetected");
         InfoSize.Text = $"{FormatBytes(_disc.TotalBytes)}  ({_disc.TotalSectors:N0} {Loc.T("Sectors")})";
+    }
+
+    // =====================================================================
+    // Long jobs: notification, eject, sleep / shutdown
+    // =====================================================================
+
+    private async Task FinishedAsync(string title, string message, bool discJob)
+    {
+        FinishActions.Notify(title, message);
+        AddLog(message);
+        var power = (PowerAction)FinishBox.SelectedIndex;
+        if (discJob && EjectBox.IsChecked == true && _driveLetter != null)
+        {
+            string letter = _driveLetter;
+            CloseLiveContent(clearTree: false);
+            if (await Task.Run(() => ScsiOpticalDevice.Eject(letter))) AddLog(Loc.T("Ejected"));
+        }
+        if (power != PowerAction.None) FinishActions.RunPowerAction(this, power);
+        else if (!discJob || EjectBox.IsChecked != true)
+            MessageBox.Show(this, message, "DVD 360", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    // =====================================================================
+    // Report
+    // =====================================================================
+
+    private string? WriteReport(string imagePath, DiscInfo info, SectorMap map, bool open)
+    {
+        try
+        {
+            string html = Path.Combine(Path.GetDirectoryName(imagePath)!, Path.GetFileNameWithoutExtension(imagePath) + "_" + Loc.T("ReportFile") + ".html");
+            string title = $"DVD 360 — {(string.IsNullOrWhiteSpace(info.VolumeLabel) ? Path.GetFileNameWithoutExtension(imagePath) : info.VolumeLabel)}";
+            RescueReport.WriteHtml(html, info, map, _fs, title);
+            if (open) Process.Start(new ProcessStartInfo(html) { UseShellExecute = true });
+            return html;
+        }
+        catch (Exception ex) { AddLog(ex.Message); return null; }
+    }
+
+    private void Report_Click(object sender, RoutedEventArgs e)
+    {
+        string? path = TargetPath();
+        var map = StatusMap;
+        if (path == null || map == null || !File.Exists(path)) { Warn(Loc.T("ReadFirst")); return; }
+        var info = _disc ?? (_fs?.Source as DiscImage)?.Info;
+        if (info == null) { Warn(Loc.T("ReadFirst")); return; }
+        string? html = WriteReport(path, info, map, open: true);
+        if (html != null) AddLog(Loc.T("ReportSaved", html));
+    }
+
+    // =====================================================================
+    // Audio CD -> WAV / FLAC
+    // =====================================================================
+
+    private async void SaveAudio_Click(object sender, RoutedEventArgs e)
+    {
+        var info = (_fs?.Source as DiscImage)?.Info ?? _image?.Info ?? _disc;
+        if (info == null || AudioTracks.Find(info).Count == 0) { Warn(Loc.T("NoAudio")); return; }
+        var img = _image ?? (_fs?.Source as DiscImage);
+        if (img == null)
+        {
+            string? path = TargetPath();
+            if (path == null || !File.Exists(path)) { Warn(Loc.T("RescueFirst")); return; }
+            LoadImage(path);
+            img = _image;
+            if (img == null) return;
+        }
+        var dlg = new OpenFolderDialog { Title = Loc.T("SaveAudio"), InitialDirectory = Path.GetDirectoryName(img.Path) };
+        if (dlg.ShowDialog(this) != true) return;
+        var format = SelectedAudioFormat();
+        if (format != AudioFormat.Wav && VideoConverter.FindFfmpeg() == null) { Warn(Loc.T("FfmpegMissing")); format = AudioFormat.Wav; }
+        await ExportAudioAsync(img, Path.Combine(dlg.FolderName, Loc.T("MusicFolder")), format);
+    }
+
+    private async Task<int> ExportAudioAsync(DiscImage img, string folder, AudioFormat format)
+    {
+        List<string> files = [];
+        await RunContentTask((p, ct) =>
+        {
+            files = AudioTracks.ExportWav(img, folder, p, ct);
+            return Loc.T("AudioSaved", files.Count, folder);
+        });
+        string? ffmpeg = VideoConverter.FindFfmpeg();
+        if (format != AudioFormat.Wav && ffmpeg != null)
+        {
+            foreach (var wav in files)
+            {
+                ContentStatus.Text = Loc.T("Converting", Path.GetFileName(wav));
+                try
+                {
+                    await VideoConverter.ConvertAudioAsync(ffmpeg, wav, Path.ChangeExtension(wav, VideoConverter.Extension(format)), format, CancellationToken.None);
+                    File.Delete(wav);
+                }
+                catch (Exception ex) { AddLog(ex.Message); }
+            }
+            ContentStatus.Text = Loc.T("AudioSaved", files.Count, folder);
+        }
+        if (Directory.Exists(folder)) Process.Start("explorer.exe", $"\"{folder}\"");
+        return files.Count;
+    }
+
+    // =====================================================================
+    // One click: rescue -> files -> videos -> music -> report -> finish
+    // =====================================================================
+
+    private async void OneClick_Click(object sender, RoutedEventArgs e)
+    {
+        if (_engine != null || _videoCts != null) return;
+        if (_disc == null) { Warn(Loc.T("InsertDisc")); return; }
+        if (MessageBox.Show(this, Loc.T("OneClickConfirm", FolderBox.Text.Trim()), "DVD 360", MessageBoxButton.OKCancel, MessageBoxImage.Information) != MessageBoxResult.OK) return;
+
+        bool hasVideo = _fs != null && _fs.Files.Any(f => f.IsForm2 || IsVideo(f.Name));
+        if (hasVideo && VideoConverter.FindFfmpeg() == null &&
+            MessageBox.Show(this, Loc.T("AskFfmpeg"), "DVD 360", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+        {
+            try { await VideoConverter.DownloadFfmpegAsync(new Progress<double>(p => FfmpegText.Text = Loc.T("Downloading", p * 100)), CancellationToken.None); }
+            catch (Exception ex) { AddLog(ex.Message); }
+            UpdateFfmpegStatus();
+        }
+
+        ModeWhole.IsChecked = true;
+        _quiet = true;
+        OneClickButton.IsEnabled = false;
+        var info = _disc;
+        string? image = null;
+        string summary;
+        try
+        {
+            AddLog(Loc.T("OneClickStep", 1, Loc.T("TabRescue")));
+            if (!await RunRescueAsync(retryBad: false)) return;
+            image = TargetPath()!;
+            LoadImage(image);
+            string baseDir = Path.Combine(Path.GetDirectoryName(image)!, Path.GetFileNameWithoutExtension(image));
+            int files = 0, videos = 0, songs = 0;
+
+            if (_fs != null)
+            {
+                AddLog(Loc.T("OneClickStep", 2, Loc.T("Extract")));
+                var fs = _fs;
+                IsoFileSystem.ExtractReport? r = null;
+                await RunContentTask((p, ct) => { r = fs.ExtractAll(Path.Combine(baseDir, Loc.T("FilesFolder")), p, ct); return ""; });
+                files = r?.Files ?? 0;
+
+                AddDiscVideos(switchTab: false);
+                if (_videos.Any(v => !v.Done) && VideoConverter.FindFfmpeg() != null)
+                {
+                    AddLog(Loc.T("OneClickStep", 3, Loc.T("TabVideo")));
+                    Tabs.SelectedIndex = 2;
+                    var res = await ConvertVideosAsync(Path.Combine(baseDir, Loc.T("VideosFolder")));
+                    videos = res.Done;
+                }
+            }
+            if (_image != null && AudioTracks.Find(_image.Info).Count > 0)
+            {
+                AddLog(Loc.T("OneClickStep", 4, Loc.T("SaveAudio")));
+                songs = await ExportAudioAsync(_image, Path.Combine(baseDir, Loc.T("MusicFolder")), VideoConverter.FindFfmpeg() != null ? SelectedAudioFormat() : AudioFormat.Wav);
+            }
+            var map = (_fs?.Source as DiscImage)?.Map ?? _image?.Map;
+            if (map != null) WriteReport(image, info, map, open: false);
+            summary = Loc.T("OneClickDone", files, videos, songs, baseDir);
+            Tabs.SelectedIndex = 0;
+            if (Directory.Exists(baseDir)) Process.Start("explorer.exe", $"\"{baseDir}\"");
+        }
+        finally
+        {
+            _quiet = false;
+            OneClickButton.IsEnabled = true;
+        }
+        await FinishedAsync(Loc.T("RescueDoneTitle"), summary, discJob: true);
+    }
+
+    // =====================================================================
+    // Drag & drop, updates
+    // =====================================================================
+
+    private static readonly string[] ImageExtensions = [".bin", ".iso"];
+
+    private void Window_DragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void Window_Drop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] paths) return;
+        foreach (var path in paths)
+        {
+            string ext = Path.GetExtension(path).ToLowerInvariant();
+            if (ImageExtensions.Contains(ext) && _engine == null)
+            {
+                CloseLiveContent(clearTree: true);
+                LoadImage(path);
+                Tabs.SelectedIndex = 1;
+            }
+            else if (VideoConverter.VideoExtensions.Contains(ext))
+            {
+                _videos.Add(new VideoItem { Name = Path.GetFileName(path), FilePath = path, Detail = $"{path} — {FormatBytes(new FileInfo(path).Length)}" });
+                Tabs.SelectedIndex = 2;
+            }
+        }
+    }
+
+    private string? _updateUrl;
+
+    private async Task CheckForUpdateAsync()
+    {
+        try
+        {
+            using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+            http.DefaultRequestHeaders.UserAgent.ParseAdd("DVD360");
+            string json = await http.GetStringAsync("https://api.github.com/repos/OmerCarnacar/DVD_360/releases/latest");
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            string tag = doc.RootElement.GetProperty("tag_name").GetString() ?? "";
+            var current = Assembly.GetExecutingAssembly().GetName().Version;
+            if (Version.TryParse(tag.TrimStart('v', 'V'), out var latest) && current != null && latest > new Version(current.Major, current.Minor, current.Build))
+            {
+                _updateUrl = doc.RootElement.GetProperty("html_url").GetString();
+                UpdateButton.Content = Loc.T("UpdateAvailable", tag);
+                UpdateButton.Visibility = Visibility.Visible;
+            }
+        }
+        catch { /* offline: no problem */ }
+    }
+
+    private void Update_Click(object sender, RoutedEventArgs e)
+    {
+        if (_updateUrl != null) Process.Start(new ProcessStartInfo(_updateUrl) { UseShellExecute = true });
     }
 
     private void Lang_Click(object sender, RoutedEventArgs e)

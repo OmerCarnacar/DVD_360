@@ -9,7 +9,12 @@ public sealed class AppSettings
     public string? Folder { get; set; }
     public string? VideoFolder { get; set; }
 
-    private static string FilePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DVD360", "settings.json");
+    /// <summary>Portable mode: a file named "portable.txt" next to the program keeps everything beside it (USB stick).</summary>
+    public static bool IsPortable => File.Exists(Path.Combine(AppContext.BaseDirectory, "portable.txt"));
+
+    private static string FilePath => IsPortable
+        ? Path.Combine(AppContext.BaseDirectory, "settings.json")
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DVD360", "settings.json");
 
     public static AppSettings Load()
     {

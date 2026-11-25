@@ -4,7 +4,11 @@
         xmlns:local="clr-namespace:Dvd360.App"
         Title="DVD 360" Width="1220" Height="820" MinWidth="980" MinHeight="680"
         Background="{StaticResource Bg}" WindowStartupLocation="CenterScreen"
-        FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="13">
+        FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="13"
+        AllowDrop="True" DragOver="Window_DragOver" Drop="Window_Drop">
+    <Window.TaskbarItemInfo>
+        <TaskbarItemInfo x:Name="Taskbar"/>
+    </Window.TaskbarItemInfo>
     <Grid Margin="20">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -14,6 +18,7 @@
         <!-- header -->
         <DockPanel Margin="0,0,0,14">
             <Button DockPanel.Dock="Right" Content="{Binding [Lang], Source={x:Static local:Loc.I}}" Click="Lang_Click" Padding="12,6" Margin="0"/>
+            <Button x:Name="UpdateButton" DockPanel.Dock="Right" Visibility="Collapsed" Style="{StaticResource Primary}" Click="Update_Click" Padding="12,6" Margin="0,0,10,0"/>
             <StackPanel Orientation="Horizontal">
                 <TextBlock Text="DVD 360" FontSize="26" FontWeight="Bold"/>
                 <TextBlock Text="{Binding [AppSubtitle], Source={x:Static local:Loc.I}}" Style="{StaticResource Muted}" FontSize="14" VerticalAlignment="Bottom" Margin="12,0,0,5"/>
@@ -98,6 +103,8 @@
                                 <WrapPanel Margin="0,0,0,14">
                                     <RadioButton x:Name="ModeWhole" GroupName="mode" IsChecked="True" Foreground="{StaticResource Text}" Margin="0,0,24,0" VerticalContentAlignment="Center"
                                                  Content="{Binding [ModeWhole], Source={x:Static local:Loc.I}}" Checked="Mode_Changed"/>
+                                    <RadioButton x:Name="ModeMedia" GroupName="mode" Foreground="{StaticResource Text}" Margin="0,0,24,0" VerticalContentAlignment="Center"
+                                                 Content="{Binding [ModeMedia], Source={x:Static local:Loc.I}}" Checked="Mode_Changed"/>
                                     <RadioButton x:Name="ModeSelected" GroupName="mode" Foreground="{StaticResource Text}" Margin="0,0,12,0" VerticalContentAlignment="Center"
                                                  Content="{Binding [ModeSelected], Source={x:Static local:Loc.I}}" Checked="Mode_Changed"/>
                                     <Button x:Name="PickButton" Content="{Binding [PickInContents], Source={x:Static local:Loc.I}}" Click="PickInContents_Click" Padding="10,4" Margin="0"/>
@@ -141,12 +148,25 @@
                         </Border>
 
                         <WrapPanel Grid.Row="1" Margin="0,0,0,4">
+                            <Button x:Name="OneClickButton" Style="{StaticResource Primary}" Background="#16A34A" BorderBrush="#16A34A" Click="OneClick_Click"
+                                    Content="{Binding [OneClick], Source={x:Static local:Loc.I}}" ToolTip="{Binding [OneClickTip], Source={x:Static local:Loc.I}}"/>
                             <Button x:Name="StartButton" Style="{StaticResource Primary}" Content="{Binding [Start], Source={x:Static local:Loc.I}}" Click="Start_Click"/>
                             <Button x:Name="StopButton" Style="{StaticResource Danger}" Content="{Binding [Stop], Source={x:Static local:Loc.I}}" Click="Stop_Click" IsEnabled="False"/>
                             <Button x:Name="RetryButton" Content="{Binding [RetryBad], Source={x:Static local:Loc.I}}" Click="RetryBad_Click" IsEnabled="False"/>
                             <Button x:Name="RescueIsoButton" Content="{Binding [SaveIso], Source={x:Static local:Loc.I}}" Click="RescueSaveIso_Click"/>
                             <Button Content="{Binding [OpenFolder], Source={x:Static local:Loc.I}}" Click="OpenFolder_Click"/>
-                            <CheckBox x:Name="AutoIsoBox" IsChecked="True" VerticalAlignment="Center" Margin="4,0,0,8" Content="{Binding [AutoIso], Source={x:Static local:Loc.I}}"/>
+                            <Button x:Name="ReportButton" Content="{Binding [Report], Source={x:Static local:Loc.I}}" Click="Report_Click"/>
+                            <CheckBox x:Name="AutoIsoBox" IsChecked="True" VerticalAlignment="Center" Margin="4,0,16,8" Content="{Binding [AutoIso], Source={x:Static local:Loc.I}}"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8" VerticalAlignment="Center" ToolTip="{Binding [WhenDoneTip], Source={x:Static local:Loc.I}}">
+                                <TextBlock Text="{Binding [WhenDone], Source={x:Static local:Loc.I}}" Style="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <ComboBox x:Name="FinishBox" SelectedIndex="0" MinWidth="170">
+                                    <ComboBoxItem Content="{Binding [Power_None], Source={x:Static local:Loc.I}}"/>
+                                    <ComboBoxItem Content="{Binding [Power_Sleep], Source={x:Static local:Loc.I}}"/>
+                                    <ComboBoxItem Content="{Binding [Power_Hibernate], Source={x:Static local:Loc.I}}"/>
+                                    <ComboBoxItem Content="{Binding [Power_Shutdown], Source={x:Static local:Loc.I}}"/>
+                                </ComboBox>
+                                <CheckBox x:Name="EjectBox" VerticalAlignment="Center" Margin="12,0,0,0" Content="{Binding [EjectWhenDone], Source={x:Static local:Loc.I}}"/>
+                            </StackPanel>
                         </WrapPanel>
 
                         <Border Grid.Row="2" Style="{StaticResource CardBox}">
@@ -205,6 +225,12 @@
                             <Button Content="{Binding [SelectNone], Source={x:Static local:Loc.I}}" Click="SelectNone_Click"/>
                             <Button x:Name="ExtractButton" Content="{Binding [Extract], Source={x:Static local:Loc.I}}" Click="Extract_Click"/>
                             <Button x:Name="IsoButton" Content="{Binding [SaveIso], Source={x:Static local:Loc.I}}" Click="SaveIso_Click"/>
+                            <Button x:Name="AudioButton" Content="{Binding [SaveAudio], Source={x:Static local:Loc.I}}" Click="SaveAudio_Click"/>
+                            <ComboBox x:Name="AudioFormatBox" SelectedIndex="0" MinWidth="110" Margin="0,0,8,8" ToolTip="{Binding [AudioFormat], Source={x:Static local:Loc.I}}">
+                                <ComboBoxItem Content="MP3"/>
+                                <ComboBoxItem Content="FLAC"/>
+                                <ComboBoxItem Content="WAV"/>
+                            </ComboBox>
                             <Button x:Name="MountButton" Content="{Binding [Mount], Source={x:Static local:Loc.I}}" Click="Mount_Click"/>
                             <Button x:Name="UnmountButton" Content="{Binding [Unmount], Source={x:Static local:Loc.I}}" Click="Unmount_Click" IsEnabled="False"/>
                         </WrapPanel>
@@ -307,6 +333,7 @@
                         </ListBox>
                         <WrapPanel Grid.Row="2" Margin="0,10,0,0">
                             <Button x:Name="ConvertButton" Style="{StaticResource Primary}" Content="{Binding [Convert], Source={x:Static local:Loc.I}}" Click="Convert_Click"/>
+                            <Button x:Name="AudioOnlyButton" Content="{Binding [AudioOnly], Source={x:Static local:Loc.I}}" Click="AudioOnly_Click"/>
                             <Button x:Name="StopVideoButton" Style="{StaticResource Danger}" Content="{Binding [Stop], Source={x:Static local:Loc.I}}" Click="StopVideo_Click" IsEnabled="False"/>
                             <Button Content="{Binding [FromDisc], Source={x:Static local:Loc.I}}" Click="AddDiscVideos_Click"/>
                             <Button Content="{Binding [AddVideos], Source={x:Static local:Loc.I}}" Click="AddVideos_Click"/>

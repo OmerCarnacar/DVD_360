@@ -10,7 +10,15 @@
     <ApplicationIcon>Assets\dvd360.ico</ApplicationIcon>
     <!-- WPF's mixed-mode DLLs (DirectWriteForwarder) cannot load from inside a single-file bundle -->
     <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <!-- only for the tray notification (NotifyIcon); everything else is WPF -->
+    <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- keep WinForms / System.Drawing names from clashing with WPF ones -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Dvd360.Core\Dvd360.Core.csproj" />

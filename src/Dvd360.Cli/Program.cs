@@ -19,6 +19,10 @@ DVD 360 — CD/DVD rescue (command line)
   dvd360 extract <image> <folder>       copy all files out of the image
   dvd360 iso <image> <out.iso>          make a mountable ISO
   dvd360 mkiso <folder> <out.iso> [label]   make an ISO from a folder
+  dvd360 report <image> <out.html>      write an HTML rescue report
+  dvd360 audio <image> <folder>         save audio CD tracks as WAV
+  dvd360 eject <E> / load <E>           open / close the tray
+  dvd360 mp3 <video|wav> <out.mp3>      save only the sound as MP3 (or: flac)
   dvd360 mp4 <video> <out.mp4> [--quality original|720|1080] [--hevc]
 """;
 
@@ -97,10 +101,46 @@ try
             return 0;
         }
 
+        case "report":
+        {
+            using var img = DiscImage.Open(args[1]);
+            if (img.Map == null) throw new InvalidDataException("No .map next to the image.");
+            var fs = IsoFileSystem.TryOpen(img, out _);
+            RescueReport.WriteHtml(args[2], img.Info, img.Map, fs, "DVD 360 — " + Path.GetFileNameWithoutExtension(args[1]));
+            Console.WriteLine("Report written.");
+            return 0;
+        }
+
+        case "audio":
+        {
+            using var img = DiscImage.Open(args[1]);
+            var files = AudioTracks.ExportWav(img, args[2], null, cts.Token);
+            Console.WriteLine($"{files.Count} tracks written.");
+            return 0;
+        }
+
+        case "eject":
+            Console.WriteLine(ScsiOpticalDevice.Eject(args[1]) ? "Ejected." : "Could not eject.");
+            return 0;
+
+        case "load":
+            Console.WriteLine(ScsiOpticalDevice.Load(args[1]) ? "Tray closed." : "Could not close the tray.");
+            return 0;
+
         case "mkiso":
         {
             IsoBuilder.Write(BuildNode.FromFolder(args[1]), args.Length > 3 ? args[3] : new DirectoryInfo(args[1]).Name, args[2], null, cts.Token);
             Console.WriteLine("ISO written.");
+            return 0;
+        }
+
+        case "mp3":
+        case "flac":
+        {
+            string ffmpeg = VideoConverter.FindFfmpeg() ?? await VideoConverter.DownloadFfmpegAsync(null, cts.Token);
+            var format = args[0].ToLowerInvariant() == "mp3" ? AudioFormat.Mp3 : AudioFormat.Flac;
+            await VideoConverter.ConvertAudioAsync(ffmpeg, args[1], args[2], format, cts.Token);
+            Console.WriteLine("Done.");
             return 0;
         }
 

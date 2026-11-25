@@ -141,6 +141,8 @@ public sealed class VideoItem : Observable
     public required string Detail { get; init; }
     public string? FilePath { get; init; }
     public IsoEntry? Entry { get; init; }
+    /// <summary>A DVD title is split into VTS_xx_1..n.VOB parts; they are joined into one video.</summary>
+    public List<IsoEntry>? Parts { get; init; }
     public IsoFileSystem? FileSystem { get; init; }
     public bool Done { get; set; }
 

@@ -9,6 +9,8 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         DispatcherUnhandledException += OnUnhandled;
+        if (AppSettings.IsPortable)
+            Dvd360.Core.Video.VideoConverter.ToolsFolderOverride = Path.Combine(AppContext.BaseDirectory, "ffmpeg");
         base.OnStartup(e);
     }
 

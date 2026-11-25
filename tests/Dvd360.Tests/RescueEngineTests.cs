@@ -28,9 +28,12 @@ internal sealed class FakeDevice : ISectorDevice
     /// <summary>Called on every read, e.g. to cancel at an exact point.</summary>
     public Action<int>? OnRead { get; set; }
 
+    public List<long> ReadLbas { get; } = new();
+
     public ReadOutcome Read(long lba, int count, Span<byte> dest)
     {
         ReadCalls++;
+        ReadLbas.Add(lba);
         OnRead?.Invoke(ReadCalls);
         if (EjectAtLba is { } e && lba <= e && e < lba + count) { EjectAtLba = null; return ReadOutcome.NoMedia; }
         for (long s = lba; s < lba + count; s++)
@@ -353,5 +356,186 @@ public sealed class VideoConverterTests
     {
         var args = Dvd360.Core.Video.VideoConverter.BuildArguments(new Dvd360.Core.Video.VideoJob { Input = @"C:\x\clip.mp4", Output = @"C:\x\b.mp4" }).ToList();
         Assert.True(args.IndexOf("-f") < 0 || args.IndexOf("-f") > args.IndexOf("-i"));
+    }
+}
+
+
+/// <summary>A pretend Video CD: Mode 2 Form 2 sectors with a correct EDC; "noisy" sectors come back with a few
+/// different wrong bytes on every read, as a scratched VCD does (Form 2 has no error correction).</summary>
+internal sealed class FakeVcd : ISectorDevice
+{
+    private readonly Random _rng = new(7);
+    public HashSet<long> Noisy { get; } = new();
+
+    public FakeVcd(long sectors) =>
+        Info = new DiscInfo { TotalSectors = sectors, SectorSize = 2352, IsCd = true, MediaType = "CD-R", Tracks = [new TrackInfo(1, 0, true)] };
+
+    public DiscInfo Info { get; }
+    public int MaxSectorsPerRead => 16;
+    public uint ReadTimeoutSeconds { get; set; } = 20;
+    public bool SetReadSpeed(int multiplier) => true;
+    public void Dispose() { }
+
+    public static byte[] Sector(long lba)
+    {
+        var s = new byte[2352];
+        for (int i = 1; i <= 10; i++) s[i] = 0xFF;
+        long a = lba + 150;
+        static byte Bcd(long v) => (byte)((v / 10) << 4 | v % 10);
+        s[12] = Bcd(a / 4500); s[13] = Bcd(a / 75 % 60); s[14] = Bcd(a % 75); s[15] = 2;
+        s[16] = s[20] = 1; s[17] = s[21] = 1; s[18] = s[22] = 0x20 | 0x04; // form 2, video
+        for (int i = 24; i < 2348; i++) s[i] = (byte)(lba * 13 + i * 7);
+        BitConverter.GetBytes(CdSector.ComputeEdc(s.AsSpan(16, 2332))).CopyTo(s, 2348);
+        return s;
+    }
+
+    public ReadOutcome Read(long lba, int count, Span<byte> dest)
+    {
+        for (int k = 0; k < count; k++)
+        {
+            var s = Sector(lba + k);
+            if (Noisy.Contains(lba + k))
+                for (int j = 0; j < 3; j++) s[_rng.Next(24, 2348)] ^= (byte)_rng.Next(1, 256);
+            s.CopyTo(dest.Slice(k * 2352, 2352));
+        }
+        return ReadOutcome.Ok;
+    }
+}
+
+public sealed class VotingAndCacheTests : IDisposable
+{
+    private readonly string _dir = Path.Combine(Path.GetTempPath(), "dvd360-vote-" + Guid.NewGuid().ToString("N"));
+    public VotingAndCacheTests() => Directory.CreateDirectory(_dir);
+    public void Dispose() { try { Directory.Delete(_dir, true); } catch { } }
+
+    [Fact]
+    public void Generated_vcd_sector_verifies()
+    {
+        Assert.True(CdSector.Verify(FakeVcd.Sector(1234), 1234));
+        Assert.Equal(SectorKind.Mode2Form2, CdSector.GetKind(FakeVcd.Sector(1234)));
+    }
+
+    [Fact]
+    public async Task Noisy_vcd_sectors_are_repaired_by_majority_vote()
+    {
+        var dev = new FakeVcd(400);
+        dev.Noisy.UnionWith([10, 11, 250]);
+        string img = Path.Combine(_dir, "vcd.bin");
+        var engine = new RescueEngine(dev, img, new RescueOptions { Retries = 5 });
+        await engine.RunAsync(CancellationToken.None);
+
+        Assert.Equal(400, engine.OkSectors);
+        var bytes = File.ReadAllBytes(img);
+        foreach (long lba in new long[] { 10, 11, 250 })
+            Assert.True(bytes.AsSpan((int)lba * 2352, 2352).SequenceEqual(FakeVcd.Sector(lba)), $"sector {lba} not repaired");
+    }
+
+    [Fact]
+    public async Task Without_voting_noisy_sectors_stay_bad()
+    {
+        var dev = new FakeVcd(100);
+        dev.Noisy.Add(42);
+        var engine = new RescueEngine(dev, Path.Combine(_dir, "novote.bin"), new RescueOptions { Retries = 5, VoteOnCopies = false });
+        await engine.RunAsync(CancellationToken.None);
+        Assert.Equal(1, engine.BadSectors);
+    }
+
+    [Fact]
+    public async Task Retries_read_a_far_sector_first_to_bypass_the_drive_cache()
+    {
+        var dev = new FakeDevice(1000, new Dictionary<long, int> { [300] = 2 });
+        var engine = new RescueEngine(dev, Path.Combine(_dir, "cache.iso"), new RescueOptions { Retries = 5 });
+        await engine.RunAsync(CancellationToken.None);
+        Assert.Equal(SectorState.Ok, engine.Map[300]);
+        var reads = dev.ReadLbas;
+        int first = reads.IndexOf(300);
+        int second = reads.IndexOf(300, first + 1);
+        Assert.True(second > first);
+        Assert.Contains(800L, reads.GetRange(first, second - first)); // (300 + 1000/2) % 1000
+    }
+
+    [Fact]
+    public void Majority_vote_picks_the_common_byte()
+    {
+        var v = RescueEngine.MajorityVote([[1, 2, 3], [1, 9, 3], [7, 2, 3]]);
+        Assert.Equal(new byte[] { 1, 2, 3 }, v);
+    }
+}
+
+public sealed class ReportAndAudioTests : IDisposable
+{
+    private readonly string _dir = Path.Combine(Path.GetTempPath(), "dvd360-rep-" + Guid.NewGuid().ToString("N"));
+    public ReportAndAudioTests() => Directory.CreateDirectory(_dir);
+    public void Dispose() { try { Directory.Delete(_dir, true); } catch { } }
+
+    [Fact]
+    public void Audio_tracks_become_wav_files_with_silence_for_unread_sectors()
+    {
+        // a two-track audio CD image: track 1 = sectors 0..99, track 2 = 100..249
+        string bin = Path.Combine(_dir, "audio.bin");
+        var data = new byte[250 * 2352];
+        for (int i = 0; i < data.Length; i++) data[i] = (byte)(i % 251 + 1);
+        File.WriteAllBytes(bin, data);
+        var info = new DiscInfo { IsCd = true, SectorSize = 2352, TotalSectors = 250, MediaType = "CD-R", Tracks = [new TrackInfo(1, 0, false), new TrackInfo(2, 100, false)] };
+        File.WriteAllText(bin + ".json", System.Text.Json.JsonSerializer.Serialize(info));
+        var map = new SectorMap(250, 2352);
+        for (long l = 0; l < 250; l++) map.Set(l, l == 120 ? SectorState.Bad : SectorState.Ok);
+        map.Save(bin + ".map");
+
+        using var img = DiscImage.Open(bin);
+        var files = AudioTracks.ExportWav(img, Path.Combine(_dir, "wav"));
+
+        Assert.Equal(2, files.Count);
+        Assert.EndsWith("Track 01.wav", files[0]);
+        var t2 = File.ReadAllBytes(files[1]);
+        Assert.Equal(44 + 150 * 2352, t2.Length);
+        Assert.Equal("RIFF", System.Text.Encoding.ASCII.GetString(t2, 0, 4));
+        Assert.Equal(44100, BitConverter.ToInt32(t2, 24));
+        Assert.Equal(data[100 * 2352], t2[44]);                                     // first sample of track 2
+        Assert.True(t2.AsSpan(44 + 20 * 2352, 2352).IndexOfAnyExcept((byte)0) < 0); // sector 120 is silence
+    }
+
+    [Fact]
+    public void Report_lists_fill_errors_and_files()
+    {
+        string src = Path.Combine(_dir, "src");
+        Directory.CreateDirectory(src);
+        File.WriteAllBytes(Path.Combine(src, "film.mpg"), new byte[2048 * 40]);
+        string iso = Path.Combine(_dir, "r.iso");
+        Dvd360.Core.Iso9660.IsoBuilder.Write(Dvd360.Core.Iso9660.BuildNode.FromFolder(src), "R", iso);
+        long n = new FileInfo(iso).Length / 2048;
+        var map = new SectorMap(n, 2048);
+        for (long l = 0; l < n; l++) map.Set(l, l == n - 1 ? SectorState.Bad : SectorState.Ok);
+        map.Save(iso + ".map");
+
+        using var img = DiscImage.Open(iso);
+        var fs = Dvd360.Core.Iso9660.IsoFileSystem.TryOpen(img, out _);
+        string html = Path.Combine(_dir, "report.html");
+        RescueReport.WriteHtml(html, img.Info, map, fs, "Test");
+        string text = File.ReadAllText(html);
+        Assert.Contains("film.mpg", text);
+        Assert.Contains("<!doctype html>", text);
+        Assert.Contains("var(--dead)", text);
+    }
+}
+
+public sealed class AudioArgumentTests
+{
+    [Fact]
+    public void Mp3_from_rescued_vcd_drops_video_and_forces_mpeg()
+    {
+        var a = Dvd360.Core.Video.VideoConverter.BuildAudioArguments(@"C:\x\AVSEQ01.mpg", @"C:\x\a.mp3", Dvd360.Core.Video.AudioFormat.Mp3).ToList();
+        Assert.Contains("-vn", a);
+        Assert.Contains("libmp3lame", a);
+        Assert.True(a.IndexOf("-f") < a.IndexOf("-i"));
+        Assert.Equal(@"C:\x\a.mp3", a[^1]);
+    }
+
+    [Fact]
+    public void Flac_from_wav_is_lossless()
+    {
+        var a = Dvd360.Core.Video.VideoConverter.BuildAudioArguments(@"C:\x\Track 01.wav", @"C:\x\t.flac", Dvd360.Core.Video.AudioFormat.Flac).ToList();
+        Assert.Contains("flac", a);
+        Assert.DoesNotContain("mpeg", a);
     }
 }
