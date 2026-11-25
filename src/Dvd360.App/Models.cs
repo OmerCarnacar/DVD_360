@@ -89,7 +89,8 @@ public sealed class FileNode : Observable
     public Brush TileFore => B(TileColors[Category].Fore);
 
     /// <summary>Folder shown under the name in the card list.</summary>
-    public string FolderText => Entry.Parent?.Parent == null ? "\\" : "\\" + Entry.Parent.FullPath;
+    public string FolderText => Entry.AudioTrack > 0 ? "♪ " + Entry.Parent!.Name + "  •  " + Loc.T("TrackLength", TimeSpan.FromSeconds(Entry.SectorCount / 75.0))
+        : Entry.Parent?.Parent == null ? "\\" : "\\" + Entry.Parent.FullPath;
 
     public double OkWidth { get => _okWidth; private set => Set(ref _okWidth, value); }
     public double ErrWidth { get => _errWidth; private set => Set(ref _errWidth, value); }

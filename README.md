@@ -44,7 +44,7 @@ Her okumanın bir zaman aşımı vardır, bu yüzden program hiç donmaz. Her CD
 - 🎬 **Video → MP4:** Taramalı görüntü düzeltilir (bwdif), parazit azaltılır, görüntü 720p / 1080p'ye büyütülüp keskinleştirilir, H.264 veya H.265 olarak kaydedilir. Bozuk sektörlü videolar da işlenir.
 - ⚡ **Tek tıkla kurtarma:** Diski okur, dosyaları çıkarır, videoları MP4'e, şarkıları MP3/FLAC'a çevirir, rapor yazar; her şey tek klasörde.
 - 🎵 **Video ve müzik odaklı kurtarma:** Yalnızca video dosyalarının ve ses parçalarının sektörleri okunur.
-- 🎶 **Ses CD'leri:** Her şarkı ayrı **MP3, FLAC veya WAV** olarak kaydedilir. Videoların yalnızca sesi de MP3 olarak alınabilir.
+- 🎶 **Ses CD'leri:** Şarkılar içerik listesinde "Track 01.wav" gibi dosyalar olarak, süreleri ve hata durumlarıyla görünür; önizlenebilir, seçilip kurtarılabilir. Her şarkı ayrı **MP3, FLAC veya WAV** olarak kaydedilir. Videoların yalnızca sesi de MP3 olarak alınabilir.
 - 🧮 **Çoklu okuma oylaması:** Video CD sektörleri birkaç kez okunur, her bayt için çoğunluk seçilir; sağlama toplamı tutarsa sektör onarılmış sayılır. Tekrar denemelerden önce sürücünün önbelleği atlatılır.
 - 📊 **Hasar raporu:** Disk haritası ve dosya başına doluluk/hata içeren HTML rapor.
 - 📼 **DVD-Video:** `VTS_xx_1..n.VOB` parçaları tek bir videoya birleştirilip MP4'e çevrilir.

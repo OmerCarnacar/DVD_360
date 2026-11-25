@@ -12,12 +12,19 @@ public sealed class IsoEntry
     public DateTime? Modified { get; init; }
     /// <summary>Video CD style file stored in 2324-byte Mode 2 Form 2 sectors.</summary>
     public bool IsForm2 { get; set; }
+    /// <summary>
+    /// Track number of an audio CD track shown as a file (0 = a normal file). Its Extent/SectorCount are the track's
+    /// raw sector range; it is read out as a WAV file. Not part of the ISO 9660 file system on the disc.
+    /// </summary>
+    public int AudioTrack { get; init; }
+    /// <summary>A folder DVD 360 made up to hold audio tracks (not on the disc).</summary>
+    public bool IsVirtual { get; init; }
     public IsoEntry? Parent { get; set; }
     public List<IsoEntry> Children { get; } = new();
 
     public long SectorCount => (RecordedSize + 2047) / 2048;
     /// <summary>Real number of bytes when the file is extracted.</summary>
-    public long DataSize => IsForm2 ? SectorCount * CdSector.Form2DataSize : RecordedSize;
+    public long DataSize => AudioTrack > 0 ? 44 + SectorCount * CdSector.RawSize : IsForm2 ? SectorCount * CdSector.Form2DataSize : RecordedSize;
     /// <summary>Name used on extraction: VCD .DAT video files become .mpg so players open them.</summary>
     public string OutputName => IsForm2 && Name.EndsWith(".DAT", StringComparison.OrdinalIgnoreCase)
         ? Name[..^4] + ".mpg" : Name;
@@ -67,7 +74,38 @@ public sealed class IsoFileSystem
     {
         yield return (Math.Max(0, DescriptorLba - 16), 16 + 48); // system area + descriptors + (usually) path tables
         yield return (Root.Extent, Root.SectorCount);
-        foreach (var d in Root.Descendants().Where(e => e.IsDirectory)) yield return (d.Extent, d.SectorCount);
+        foreach (var d in Root.Descendants().Where(e => e.IsDirectory && !e.IsVirtual)) yield return (d.Extent, d.SectorCount);
+    }
+
+    /// <summary>A file system with nothing but the audio tracks, for audio CDs (they have no ISO 9660 part).</summary>
+    public static IsoFileSystem ForAudioOnly(ISectorSource source, string volumeName)
+    {
+        var root = new IsoEntry { Name = "", IsDirectory = true, Extent = -1, IsVirtual = true };
+        return new IsoFileSystem(source, root, volumeName, joliet: false);
+    }
+
+    /// <summary>
+    /// Shows the disc's audio tracks as "Track NN.wav" files in a folder, so they can be browsed, previewed,
+    /// picked and extracted like any file. Returns how many were added.
+    /// </summary>
+    public int AddAudioTracks(string folderName)
+    {
+        var tracks = AudioTracks.Find(_image.Info);
+        if (tracks.Count == 0 || !_image.IsRawCd) return 0;
+        var folder = new IsoEntry { Name = folderName, IsDirectory = true, Extent = -1, IsVirtual = true, Parent = Root };
+        foreach (var t in tracks)
+        {
+            var e = new IsoEntry
+            {
+                Name = $"Track {t.Number:00}.wav", IsDirectory = false, Extent = t.StartLba, RecordedSize = t.Sectors * 2048,
+                AudioTrack = t.Number, Parent = folder,
+            };
+            if (_image.KnowsDamage)
+                for (long i = 0; i < e.SectorCount; i++) if (!_image.IsGood(e.Extent + i)) e.BadSectors++;
+            folder.Children.Add(e);
+        }
+        Root.Children.Insert(0, folder);
+        return tracks.Count;
     }
 
     /// <summary>Finds the entry with the same path (e.g. map a file picked on the live disc to the rescued image).</summary>
@@ -261,6 +299,7 @@ public sealed class IsoFileSystem
     /// <summary>Copies at most <paramref name="maxBytes"/> of a file (e.g. the start of a video for a quick preview).</summary>
     public void CopyFile(IsoEntry file, Stream output, long maxBytes, CancellationToken ct = default)
     {
+        if (file.AudioTrack > 0) { CopyAudioTrack(file, output, maxBytes, ct); return; }
         var expected = file.IsForm2 ? SectorKind.Mode2Form2 : SectorKind.Mode2Form1;
         long remaining = Math.Min(maxBytes, file.IsForm2 ? file.DataSize : file.RecordedSize);
         var buf = new byte[CdSector.Form2DataSize];
@@ -276,6 +315,21 @@ public sealed class IsoFileSystem
             int n = (int)Math.Min(len, remaining);
             output.Write(buf, 0, n);
             remaining -= n;
+        }
+    }
+
+    /// <summary>Audio track as WAV: header + raw 16-bit stereo samples; unread sectors become silence.</summary>
+    private void CopyAudioTrack(IsoEntry file, Stream output, long maxBytes, CancellationToken ct)
+    {
+        long sectors = Math.Min(file.SectorCount, Math.Max(0, (maxBytes - 44) / CdSector.RawSize));
+        AudioTracks.WriteWavHeader(output, sectors * CdSector.RawSize);
+        var silence = new byte[CdSector.RawSize];
+        for (long i = 0; i < sectors; i++)
+        {
+            if ((i & 255) == 0) ct.ThrowIfCancellationRequested();
+            long lba = file.Extent + i;
+            if (lba < _image.SectorCount && _image.IsGood(lba)) output.Write(_image.ReadRaw(lba)[..CdSector.RawSize]);
+            else output.Write(silence);
         }
     }
 

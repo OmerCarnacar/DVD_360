@@ -170,7 +170,7 @@ public partial class MainWindow : Window
         {
             dev = await Task.Run(() => ScsiOpticalDevice.Open(letter));
             var live = new LiveDiscSource(dev);
-            fs = await Task.Run(() => IsoFileSystem.TryOpen(live, out fsError));
+            fs = await Task.Run(() => OpenFileSystem(live, out fsError));
         }
         catch (NoMediaException)
         {
@@ -214,6 +214,19 @@ public partial class MainWindow : Window
         }
         UpdateTarget();
         if (fs != null && fs.HasForm2Files) AddLog(Loc.I.English ? "Video CD detected. After the rescue the videos can be turned into MP4." : "Video CD algılandı. Kurtarmadan sonra videolar MP4'e çevrilebilir.");
+    }
+
+    /// <summary>Reads the file system and adds audio CD tracks as files (audio CDs get a file system of their own).</summary>
+    private static IsoFileSystem? OpenFileSystem(ISectorSource source, out string error)
+    {
+        var fs = IsoFileSystem.TryOpen(source, out error);
+        if (AudioTracks.Find(source.Info).Count > 0 && source.IsRawCd)
+        {
+            fs ??= IsoFileSystem.ForAudioOnly(source, Loc.T("AudioCd"));
+            fs.AddAudioTracks(Loc.T("AudioCdFolder"));
+            error = "";
+        }
+        return fs;
     }
 
     private void OnDiscGone()
@@ -701,7 +714,8 @@ public partial class MainWindow : Window
         _filesByExtent = fs.Files.Where(f => f.SectorCount > 0).OrderBy(f => f.Extent).ToList();
         root.Refresh(StatusMap);
         FileTree.ItemsSource = root.Children;
-        var flat = root.SelfAndDescendants().Where(n => !n.Entry.IsDirectory).OrderBy(n => n.FolderText).ThenBy(n => n.Name).ToList();
+        var flat = root.SelfAndDescendants().Where(n => !n.Entry.IsDirectory)
+            .OrderBy(n => n.Entry.AudioTrack > 0 ? 0 : 1).ThenBy(n => n.Entry.Parent?.FullPath).ThenBy(n => n.Entry.AudioTrack).ThenBy(n => n.Name).ToList();
         _fileView = System.Windows.Data.CollectionViewSource.GetDefaultView(flat);
         _fileView.Filter = FileFilter;
         FileList.ItemsSource = _fileView;
@@ -718,7 +732,7 @@ public partial class MainWindow : Window
         {
             CloseImage();
             _image = DiscImage.Open(path);
-            _fs = IsoFileSystem.TryOpen(_image, out string err);
+            _fs = OpenFileSystem(_image, out string err);
             ShowContent(_fs, Loc.T("SourceImage", Path.GetFileName(path)), _fs == null ? err : null);
             if (_image.Map != null && _engine == null && _liveDevice == null) Disc.Render(_image.Map, 0);
         }
@@ -941,7 +955,7 @@ public partial class MainWindow : Window
                 songs = await ExportAudioAsync(_image, Path.Combine(baseDir, Loc.T("MusicFolder")), SelectedAudioFormat());
             if (_fs != null)
             {
-                var musicFiles = _fs.Files.Where(f => IsAudio(f.Name)).ToList();
+                var musicFiles = _fs.Files.Where(f => IsAudio(f.Name) && f.AudioTrack == 0).ToList();
                 if (musicFiles.Count > 0)
                 {
                     var fs = _fs;
@@ -1520,7 +1534,9 @@ public partial class MainWindow : Window
                 AddLog(Loc.T("OneClickStep", 2, Loc.T("Extract")));
                 var fs = _fs;
                 IsoFileSystem.ExtractReport? r = null;
-                await RunContentTask((p, ct) => { r = fs.ExtractAll(Path.Combine(baseDir, Loc.T("FilesFolder")), p, ct); return ""; });
+                var plainFiles = fs.Files.Where(f => f.AudioTrack == 0).ToList();
+                if (plainFiles.Count > 0)
+                    await RunContentTask((p, ct) => { r = fs.Extract(plainFiles, Path.Combine(baseDir, Loc.T("FilesFolder")), p, ct); return ""; });
                 files = r?.Files ?? 0;
 
                 AddDiscVideos(switchTab: false);

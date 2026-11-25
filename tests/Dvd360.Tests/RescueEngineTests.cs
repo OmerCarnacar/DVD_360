@@ -557,3 +557,41 @@ public sealed class AudioArgumentTests
         Assert.DoesNotContain("mpeg", a);
     }
 }
+
+public sealed class AudioTrackEntryTests : IDisposable
+{
+    private readonly string _dir = Path.Combine(Path.GetTempPath(), "dvd360-atr-" + Guid.NewGuid().ToString("N"));
+    public AudioTrackEntryTests() => Directory.CreateDirectory(_dir);
+    public void Dispose() { try { Directory.Delete(_dir, true); } catch { } }
+
+    [Fact]
+    public void Audio_cd_tracks_show_up_as_wav_files_that_match_the_export()
+    {
+        string bin = Path.Combine(_dir, "cd.bin");
+        var data = new byte[300 * 2352];
+        new Random(3).NextBytes(data);
+        File.WriteAllBytes(bin, data);
+        var info = new DiscInfo { IsCd = true, SectorSize = 2352, TotalSectors = 300, MediaType = "CD-ROM", Tracks = [new TrackInfo(1, 0, false), new TrackInfo(2, 120, false)] };
+        File.WriteAllText(bin + ".json", System.Text.Json.JsonSerializer.Serialize(info));
+        var map = new SectorMap(300, 2352);
+        for (long l = 0; l < 300; l++) map.Set(l, l is 200 or 201 ? SectorState.Bad : SectorState.Ok);
+        map.Save(bin + ".map");
+
+        using var img = DiscImage.Open(bin);
+        var fs = Dvd360.Core.Iso9660.IsoFileSystem.ForAudioOnly(img, "Audio CD");
+        Assert.Equal(2, fs.AddAudioTracks("Tracks"));
+        var t2 = fs.Files.Single(f => f.Name == "Track 02.wav");
+        Assert.Equal(2, t2.BadSectors);
+        Assert.Equal(44 + 180 * 2352, t2.DataSize);
+
+        var ms = new MemoryStream();
+        fs.CopyFile(t2, ms);
+        var exported = AudioTracks.ExportWav(img, Path.Combine(_dir, "wav"));
+        Assert.Equal(File.ReadAllBytes(exported[1]), ms.ToArray());
+
+        var part = new MemoryStream();
+        fs.CopyFile(t2, part, 44 + 10 * 2352);              // preview: just the start
+        Assert.Equal(44 + 10 * 2352, part.Length);
+        Assert.Equal(10 * 2352, BitConverter.ToInt32(part.ToArray(), 40)); // WAV header says the true length
+    }
+}

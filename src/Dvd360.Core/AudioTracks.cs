@@ -55,7 +55,7 @@ public static class AudioTracks
         return written;
     }
 
-    internal static void WriteWavHeader(Stream o, long dataBytes)
+    public static void WriteWavHeader(Stream o, long dataBytes)
     {
         using var w = new BinaryWriter(o, System.Text.Encoding.ASCII, leaveOpen: true);
         w.Write("RIFF"u8);
