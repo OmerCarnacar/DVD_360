@@ -554,10 +554,14 @@ public partial class MainWindow : Window
         ShowStats(engine.Map, engine.Stats);
         if (_scopeRanges != null)
         {
-            long total = _scopeRanges.Sum(r => r.Count), pending = engine.PendingIn(_scopeRanges);
+            long sOk = 0, sErr = 0, sUnread = 0;
+            foreach (var (start, count) in _scopeRanges)
+            {
+                var t = engine.Map.Summarize(start, count);
+                sOk += t.Ok; sErr += t.Bad + t.Retry; sUnread += t.Pending;
+            }
             PassText.Text = Loc.T("Pass_" + engine.Stats.Pass) + "  •  " + Loc.T("SelectedOnly");
-            PercentText.Text = $"{100.0 * (total - pending) / Math.Max(1, total):N1}%";
-            Progress.Value = 1000.0 * (total - pending) / Math.Max(1, total);
+            ShowFillAndErrors(sOk, sErr, sUnread, Math.Max(1, sOk + sErr + sUnread), engine.Map.SectorSize);
         }
         Disc.Render(engine.Map, engine.Stats.CurrentLba);
         if (++_treeTick % 5 == 0) RefreshTreeStatus();
@@ -565,15 +569,11 @@ public partial class MainWindow : Window
 
     private void ShowStats(SectorMap map, RescueStats? stats)
     {
-        long total = map.Count, ok = map.CountOf(SectorState.Ok), bad = map.CountOf(SectorState.Bad);
-        long pending = map.CountOf(SectorState.Untried) + map.CountOf(SectorState.NeedsRetry);
-        long useful = Math.Max(1, total - map.CountOf(SectorState.Skipped));
-        double pct = 100.0 * ok / useful;
-        Progress.Value = 1000.0 * (total - pending) / Math.Max(1, total);
-        PercentText.Text = $"{pct:N2}%";
-        StatOk.Text = FormatBytes(ok * map.SectorSize);
-        StatBad.Text = bad == 0 ? "0" : $"{bad:N0}";
-        StatPending.Text = $"{pending:N0}";
+        long total = map.Count, ok = map.CountOf(SectorState.Ok), skipped = map.CountOf(SectorState.Skipped);
+        long errors = map.CountOf(SectorState.Bad) + map.CountOf(SectorState.NeedsRetry);
+        long unread = map.CountOf(SectorState.Untried);
+        long pending = unread + map.CountOf(SectorState.NeedsRetry);
+        ShowFillAndErrors(ok, errors, unread, Math.Max(1, total - skipped), map.SectorSize);
         if (stats == null) return;
         PassText.Text = Loc.T("Pass_" + stats.Pass);
         double bps = stats.BytesPerSecond;
@@ -581,6 +581,28 @@ public partial class MainWindow : Window
         StatSpeed.Text = bps > 0 ? $"{bps / 1048576:N1} MB/s ({bps / oneX:N1}x)" : "—";
         StatElapsed.Text = stats.Elapsed.ToString(@"hh\:mm\:ss");
         StatEta.Text = bps > 0 && stats.Pass == RescuePass.FastCopy ? TimeSpan.FromSeconds(pending * map.SectorSize / bps).ToString(@"hh\:mm\:ss") : "—";
+    }
+
+    /// <summary>Fill (read) and error area are shown separately: two numbers, a three-colour bar and two rings.</summary>
+    private void ShowFillAndErrors(long ok, long errors, long unread, long useful, int sectorSize)
+    {
+        double fill = 100.0 * ok / useful, err = 100.0 * errors / useful, rest = Math.Max(0, 100 - fill - err);
+        SegOk.Width = new GridLength(fill, GridUnitType.Star);
+        SegErr.Width = new GridLength(err, GridUnitType.Star);
+        SegRest.Width = new GridLength(rest, GridUnitType.Star);
+        PercentText.Text = Loc.T("FillLine", fill);
+        StatOk.Text = Loc.T("Pct", fill);
+        StatBad.Text = Loc.T("Pct", err);
+        StatPending.Text = $"{unread:N0}";
+        BarLegend.Inlines.Clear();
+        void Part(string text, string brush)
+        {
+            BarLegend.Inlines.Add(new System.Windows.Documents.Run("■ ") { Foreground = (System.Windows.Media.Brush)FindResource(brush) });
+            BarLegend.Inlines.Add(new System.Windows.Documents.Run(text + "     "));
+        }
+        Part(Loc.T("BarFilled", fill) + $" ({FormatBytes(ok * sectorSize)})", "OkBrush");
+        Part(Loc.T("BarErrors", err) + $" ({errors:N0} {Loc.T("Sectors")})", "RetryBrush");
+        Part(Loc.T("BarUnread", rest), "MutedBrush");
     }
 
     private void AddLog(string message)

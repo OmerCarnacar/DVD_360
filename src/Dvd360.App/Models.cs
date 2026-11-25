@@ -37,7 +37,7 @@ public sealed class FileNode : Observable
     }
 
     public static readonly Brush OkBrush = Frozen(0x2E, 0xD5, 0x73), BadBrush = Frozen(0xFF, 0x4D, 0x5E),
-        RetryBrush = Frozen(0xFF, 0xB0, 0x20), MutedBrush = Frozen(0x8C, 0x97, 0xAB), PendingBrush = Frozen(0xC9, 0xD1, 0xDC);
+        RetryBrush = Frozen(0xFF, 0x4D, 0x5E), MutedBrush = Frozen(0x8C, 0x97, 0xAB), PendingBrush = Frozen(0xC9, 0xD1, 0xDC);
 
     private static Brush Frozen(byte r, byte g, byte b) { var x = new SolidColorBrush(Color.FromRgb(r, g, b)); x.Freeze(); return x; }
 
@@ -115,9 +115,8 @@ public sealed class FileNode : Observable
         else
         {
             double pct = 100.0 * t.Ok / total;
-            StateText = t.Bad > 0 ? $"⚠ {Loc.T("StateBad", t.Bad)} • %{pct:0.#}"
-                : t.Retry > 0 ? $"%{pct:0.#} • {Loc.T("LegendRetry")} {t.Retry}"
-                : $"%{pct:0.#} {Loc.T("LegendOk")}";
+            long errors = t.Bad + t.Retry;
+            StateText = errors > 0 ? Loc.T("FileFillErr", pct, errors) : Loc.T("FileFill", pct);
             StateBrush = t.Bad > 0 ? BadBrush : t.Retry > 0 ? RetryBrush : PendingBrush;
         }
         return t;

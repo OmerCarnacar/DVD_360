@@ -7,7 +7,7 @@
 [![İndir / Download](https://img.shields.io/github/v/release/OmerCarnacar/DVD_360?label=%C4%B0ndir%20%2F%20Download&style=for-the-badge)](https://github.com/OmerCarnacar/DVD_360/releases/latest)
 [![Lisans: MIT](https://img.shields.io/badge/Lisans-MIT-green?style=for-the-badge)](LICENSE)
 
-![Kurtarma ekranı: disk, okunan (yeşil), tekrar denenecek (turuncu) ve henüz okunmamış (gümüş) bölgeleri gerçek konumlarında gösteriyor](docs/screenshots/01-kurtarma.png)
+![Kurtarma ekranı: disk, dolu (yeşil), hatalı (kırmızı) ve henüz okunmamış (gümüş) bölgeleri gerçek konumlarında gösteriyor](docs/screenshots/01-kurtarma.png)
 
 | İçerik: her dosyanın durumu, seçilen dosya diskte parlıyor | Yardım ve İngilizce arayüz |
 |---|---|
@@ -29,7 +29,7 @@ Her okumanın bir zaman aşımı vardır, bu yüzden program hiç donmaz. Her CD
 ## Özellikler
 
 - 💿 **Otomatik algılama:** Disk takıldığı anda tanınır, türü ve içeriği gösterilir.
-- 🔄 **Canlı disk animasyonu:** Disk döner, okunan bölgeler gerçek konumlarında yeşille dolar. Bozuklar kırmızı, tekrar denenecekler sarı görünür.
+- 🔄 **Canlı disk animasyonu:** Disk döner, okunan bölgeler gerçek konumlarında yeşille dolar, hatalı yerler kırmızı işaretlenir. **Doluluk** (yeşil halka) ve **hatalı alan** (kırmızı halka) ayrı ayrı gösterilir.
 - 🧩 **Sektör sektör kurtarma:** İlerleme kaydedilir, istediğiniz zaman durdurup devam edebilirsiniz.
 - 📀 **ISO kalıbı:** Veri CD'leri birebir kopyalanır. Video CD'lerde tüm dosyalar eksiksiz olarak yeni bir ISO'ya yerleştirilir. Ayrıca ham `.bin/.cue` kopya da tutulur.
 - 🖥️ **Sanal CD:** Tek tıkla Windows'a sürücü olarak bağlanır ve Gezgin'de açılır.

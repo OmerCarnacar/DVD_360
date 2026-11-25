@@ -14,7 +14,8 @@
         <SolidColorBrush x:Key="AccentHover" Color="#5B9BFF"/>
         <SolidColorBrush x:Key="OkBrush" Color="#2ED573"/>
         <SolidColorBrush x:Key="BadBrush" Color="#FF4D5E"/>
-        <SolidColorBrush x:Key="RetryBrush" Color="#FFB020"/>
+        <SolidColorBrush x:Key="RetryBrush" Color="#FF4D5E"/>
+        <SolidColorBrush x:Key="DeadBrush" Color="#B3122E"/>
         <SolidColorBrush x:Key="WaitBrush" Color="#C9D1DC"/>
 
         <Style TargetType="TextBlock">

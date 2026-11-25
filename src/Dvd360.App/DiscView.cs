@@ -40,13 +40,15 @@ public sealed class DiscView : Grid
     private readonly Grid _disc = new();
     private readonly RotateTransform _spin = new();
     private readonly ScaleTransform _pop = new(1, 1);
-    private readonly Ellipse _emptySlot, _track;
-    private readonly Path _ring = new() { StrokeThickness = 6, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, IsHitTestVisible = false };
+    private readonly Ellipse _emptySlot, _track, _errTrack;
+    private readonly Path _ring = new() { StrokeThickness = 5, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, IsHitTestVisible = false };
+    private readonly Path _errRing = new() { StrokeThickness = 5, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, IsHitTestVisible = false };
+    private readonly TextBlock _centerErr = new() { FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x6B, 0x7A)), HorizontalAlignment = HorizontalAlignment.Center, IsHitTestVisible = false };
     private readonly DropShadowEffect _ringGlow = new() { Color = Color.FromRgb(0x2E, 0xD5, 0x73), BlurRadius = 16, ShadowDepth = 0, Opacity = 0.9 };
     private readonly Canvas _overlay = new() { IsHitTestVisible = false };
     private readonly Line _beam = new() { StrokeThickness = 3, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round };
     private readonly Ellipse _head, _ripple;
-    private readonly TextBlock _center = new() { FontSize = 28, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
+    private readonly TextBlock _center = new() { FontSize = 24, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
     private readonly TextBlock _caption = new() { FontSize = 14, Foreground = new SolidColorBrush(Color.FromRgb(0xA8, 0xB3, 0xC7)), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 0, -26), IsHitTestVisible = false };
     private readonly ToolTip _tip = new() { Placement = System.Windows.Controls.Primitives.PlacementMode.Mouse, HorizontalOffset = 14, VerticalOffset = 14 };
     private readonly DispatcherTimer _flashTimer = new() { Interval = TimeSpan.FromMilliseconds(33) };
@@ -58,7 +60,7 @@ public sealed class DiscView : Grid
     private bool _hasPrev;
 
     private static readonly uint Silver = Rgb(0xCB, 0xD3, 0xDE), Ok = Rgb(0x2E, 0xD5, 0x73), OkLight = Rgb(0x8E, 0xE6, 0xB0),
-        Bad = Rgb(0xFF, 0x4D, 0x5E), Retry = Rgb(0xFF, 0xB0, 0x20), Skipped = Rgb(0x3A, 0x42, 0x52),
+        Bad = Rgb(0xB3, 0x12, 0x2E), Retry = Rgb(0xFF, 0x4D, 0x5E), Skipped = Rgb(0x3A, 0x42, 0x52),
         Hub = Rgb(0x1C, 0x24, 0x34), HubEdge = Rgb(0x3A, 0x47, 0x60), Flash = Rgb(0xE6, 0xFF, 0xF4);
 
     public static readonly DependencyProperty ProgressProperty = DependencyProperty.Register(
@@ -68,8 +70,14 @@ public sealed class DiscView : Grid
         nameof(ShownPercent), typeof(double), typeof(DiscView), new PropertyMetadata(0.0, (d, e) =>
         {
             var v = (DiscView)d;
-            if (v._mode is not DiscViewMode.Empty && v._lastMap != null) v._center.Text = $"{Math.Floor((double)e.NewValue * 10) / 10:0.#}%";
+            if (v._mode is not DiscViewMode.Empty && v._lastMap != null) v._center.Text = Loc.T("PctShort", Math.Floor((double)e.NewValue * 10) / 10);
         }));
+
+    public static readonly DependencyProperty ErrorProgressProperty = DependencyProperty.Register(
+        nameof(ErrorProgress), typeof(double), typeof(DiscView), new PropertyMetadata(0.0, (d, _) => ((DiscView)d).UpdateRing()));
+
+    /// <summary>0..1 share of the disc that failed to read, drawn by the inner red ring.</summary>
+    public double ErrorProgress { get => (double)GetValue(ErrorProgressProperty); set => SetValue(ErrorProgressProperty, value); }
 
     /// <summary>0..1, drawn by the glowing ring (animated).</summary>
     public double Progress { get => (double)GetValue(ProgressProperty); set => SetValue(ProgressProperty, value); }
@@ -110,7 +118,10 @@ public sealed class DiscView : Grid
         _disc.Effect = new DropShadowEffect { Color = Colors.Black, BlurRadius = 28, ShadowDepth = 6, Direction = 270, Opacity = 0.55 };
 
         // --- progress ring
-        _track = new Ellipse { Stroke = new SolidColorBrush(Color.FromRgb(0x1C, 0x26, 0x38)), StrokeThickness = 6, Margin = new Thickness(3), IsHitTestVisible = false };
+        _track = new Ellipse { Stroke = new SolidColorBrush(Color.FromRgb(0x1C, 0x26, 0x38)), StrokeThickness = 5, Margin = new Thickness(3.5), IsHitTestVisible = false };
+        _errTrack = new Ellipse { Stroke = new SolidColorBrush(Color.FromRgb(0x24, 0x1A, 0x22)), StrokeThickness = 5, Margin = new Thickness(10.5), IsHitTestVisible = false };
+        _errRing.Stroke = new LinearGradientBrush(Color.FromRgb(0xFF, 0x4D, 0x5E), Color.FromRgb(0xFF, 0x8A, 0x6B), new Point(0, 0), new Point(1, 1));
+        _errRing.Effect = new DropShadowEffect { Color = Color.FromRgb(0xFF, 0x4D, 0x5E), BlurRadius = 12, ShadowDepth = 0, Opacity = 0.85 };
         _ring.Stroke = new LinearGradientBrush(Color.FromRgb(0x5E, 0xC8, 0xFF), Color.FromRgb(0x2E, 0xD5, 0x73), new Point(0, 0), new Point(1, 1));
         _ring.Effect = _ringGlow;
 
@@ -143,9 +154,11 @@ public sealed class DiscView : Grid
         Children.Add(_emptySlot);
         Children.Add(_track);
         Children.Add(_ring);
+        Children.Add(_errTrack);
+        Children.Add(_errRing);
         Children.Add(_disc);
         Children.Add(_overlay);
-        Children.Add(_center);
+        Children.Add(new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false, Children = { _center, _centerErr } });
         Children.Add(_caption);
 
         SizeChanged += (_, _) => { UpdateRing(); PlaceHead(_headFraction < 0 ? 0 : _headFraction, animate: false); };
@@ -228,9 +241,9 @@ public sealed class DiscView : Grid
         _mode = mode;
         bool hasDisc = mode is not DiscViewMode.Empty;
         _emptySlot.Visibility = hasDisc ? Visibility.Collapsed : Visibility.Visible;
-        _disc.Visibility = _track.Visibility = _ring.Visibility = hasDisc ? Visibility.Visible : Visibility.Collapsed;
+        _disc.Visibility = _track.Visibility = _ring.Visibility = _errTrack.Visibility = _errRing.Visibility = hasDisc ? Visibility.Visible : Visibility.Collapsed;
         _overlay.Visibility = mode is DiscViewMode.Reading ? Visibility.Visible : Visibility.Collapsed;
-        if (!hasDisc) { _center.Text = ""; _hasPrev = false; }
+        if (!hasDisc) { _center.Text = _centerErr.Text = ""; _hasPrev = false; }
 
         // spin: fast while reading, gentle when idle, coasting to a stop otherwise
         double seconds = mode switch { DiscViewMode.Reading => 0.8, DiscViewMode.Detecting => 1.4, DiscViewMode.Idle => 16, _ => 0 };
@@ -256,7 +269,7 @@ public sealed class DiscView : Grid
             DiscViewMode.Done => new DoubleAnimation(16, 40, TimeSpan.FromMilliseconds(450)) { AutoReverse = true, RepeatBehavior = new RepeatBehavior(3) },
             _ => null,
         });
-        if (mode == DiscViewMode.Empty) { Progress = 0; Render(null, 0); }
+        if (mode == DiscViewMode.Empty) { Progress = 0; ErrorProgress = 0; Render(null, 0); }
     }
 
     private void StartHeadAnimations()
@@ -304,9 +317,11 @@ public sealed class DiscView : Grid
 
             long useful = Math.Max(1, n - map.CountOf(SectorState.Skipped));
             double pct = 100.0 * map.CountOf(SectorState.Ok) / useful;
-            double done = (double)(n - map.CountOf(SectorState.Untried) - map.CountOf(SectorState.NeedsRetry)) / Math.Max(1, n);
+            double errShare = (double)(map.CountOf(SectorState.Bad) + map.CountOf(SectorState.NeedsRetry)) / useful;
             BeginAnimation(ShownPercentProperty, new DoubleAnimation(pct, TimeSpan.FromMilliseconds(600)) { EasingFunction = new QuadraticEase() });
-            BeginAnimation(ProgressProperty, new DoubleAnimation(done, TimeSpan.FromMilliseconds(600)) { EasingFunction = new QuadraticEase() });
+            BeginAnimation(ProgressProperty, new DoubleAnimation(pct / 100, TimeSpan.FromMilliseconds(600)) { EasingFunction = new QuadraticEase() });
+            BeginAnimation(ErrorProgressProperty, new DoubleAnimation(errShare, TimeSpan.FromMilliseconds(600)) { EasingFunction = new QuadraticEase() });
+            _centerErr.Text = errShare > 0 ? Loc.T("ErrShort", errShare * 100) : "";
             PlaceHead((double)currentLba / Math.Max(1, n), animate: true);
         }
         else
@@ -314,8 +329,10 @@ public sealed class DiscView : Grid
             _hasPrev = false;
             Array.Clear(_flash);
             BeginAnimation(ProgressProperty, null);
+            BeginAnimation(ErrorProgressProperty, null);
             Progress = 0;
-            _center.Text = "";
+            ErrorProgress = 0;
+            _center.Text = _centerErr.Text = "";
         }
         Compose();
         if (_flash.Any(f => f > 0) && !_flashTimer.IsEnabled) _flashTimer.Start();
@@ -384,16 +401,19 @@ public sealed class DiscView : Grid
     {
         double w = ActualWidth, h = ActualHeight;
         if (w <= 0 || h <= 0) return;
-        double rr = Math.Min(w, h) / 2 - 6, cx = w / 2, cy = h / 2;
-        double p = Math.Clamp(Progress, 0, 1);
-        if (p <= 0.0005) { _ring.Data = null; return; }
-        if (p >= 0.9995) { _ring.Data = new EllipseGeometry(new Point(cx, cy), rr, rr); return; }
+        _ring.Data = Arc(w, h, Math.Min(w, h) / 2 - 6, Progress);
+        _errRing.Data = Arc(w, h, Math.Min(w, h) / 2 - 13, ErrorProgress);
+    }
+
+    private static Geometry? Arc(double w, double h, double rr, double fraction)
+    {
+        double cx = w / 2, cy = h / 2, p = Math.Clamp(fraction, 0, 1);
+        if (p <= 0.0005) return null;
+        if (p >= 0.9995) return new EllipseGeometry(new Point(cx, cy), rr, rr);
         double a = p * 2 * Math.PI;
-        var start = new Point(cx, cy - rr);
-        var end = new Point(cx + rr * Math.Sin(a), cy - rr * Math.Cos(a));
-        var fig = new PathFigure { StartPoint = start, IsClosed = false };
-        fig.Segments.Add(new ArcSegment(end, new Size(rr, rr), 0, p > 0.5, SweepDirection.Clockwise, true));
-        _ring.Data = new PathGeometry([fig]);
+        var fig = new PathFigure { StartPoint = new Point(cx, cy - rr), IsClosed = false };
+        fig.Segments.Add(new ArcSegment(new Point(cx + rr * Math.Sin(a), cy - rr * Math.Cos(a)), new Size(rr, rr), 0, p > 0.5, SweepDirection.Clockwise, true));
+        return new PathGeometry([fig]);
     }
 
     // ------------------------------------------------------------------ highlight & hit testing
