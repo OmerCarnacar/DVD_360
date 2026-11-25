@@ -8,6 +8,8 @@
     <RootNamespace>Dvd360.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\dvd360.ico</ApplicationIcon>
+    <!-- WPF's mixed-mode DLLs (DirectWriteForwarder) cannot load from inside a single-file bundle -->
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,3 +21,4 @@
   </ItemGroup>
 
 </Project>
+
