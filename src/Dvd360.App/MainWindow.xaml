@@ -208,7 +208,8 @@
                     <Grid>
                         <Grid.Resources>
                             <ContextMenu x:Key="FileMenu" Opened="TreeMenu_Opened">
-                                <MenuItem x:Name="MenuRescueThis" Click="MenuRescueThis_Click" FontWeight="SemiBold"/>
+                                <MenuItem Header="{Binding [MenuPreview], Source={x:Static local:Loc.I}}" Click="MenuPreview_Click" FontWeight="SemiBold" InputGestureText="Space"/>
+                                <MenuItem x:Name="MenuRescueThis" Click="MenuRescueThis_Click"/>
                                 <MenuItem x:Name="MenuOpenThis" Header="{Binding [MenuOpen], Source={x:Static local:Loc.I}}" Click="MenuOpenThis_Click"/>
                                 <Separator/>
                                 <MenuItem x:Name="MenuToggleThis" Click="MenuToggleThis_Click"/>
@@ -351,7 +352,7 @@
                             <ListBox x:Name="FileList" Background="Transparent" BorderThickness="0" Padding="0"
                                      ItemContainerStyle="{StaticResource FileCard}" ContextMenu="{StaticResource FileMenu}"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.ScrollUnit="Pixel"
-                                     SelectionChanged="FileList_SelectionChanged" MouseDoubleClick="FileTree_DoubleClick" PreviewMouseRightButtonDown="FileTree_PreviewRightClick">
+                                     SelectionChanged="FileList_SelectionChanged" MouseDoubleClick="FileTree_DoubleClick" PreviewKeyDown="FileList_PreviewKeyDown" PreviewMouseRightButtonDown="FileTree_PreviewRightClick">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate DataType="{x:Type local:FileNode}">
                                         <Grid Height="44">

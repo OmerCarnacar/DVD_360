@@ -256,10 +256,13 @@ public sealed class IsoFileSystem
     // ---------------------------------------------------------------- extraction
 
     /// <summary>Copies a file's data to <paramref name="output"/>. Damaged sectors become zeros.</summary>
-    public void CopyFile(IsoEntry file, Stream output, CancellationToken ct = default)
+    public void CopyFile(IsoEntry file, Stream output, CancellationToken ct = default) => CopyFile(file, output, long.MaxValue, ct);
+
+    /// <summary>Copies at most <paramref name="maxBytes"/> of a file (e.g. the start of a video for a quick preview).</summary>
+    public void CopyFile(IsoEntry file, Stream output, long maxBytes, CancellationToken ct = default)
     {
         var expected = file.IsForm2 ? SectorKind.Mode2Form2 : SectorKind.Mode2Form1;
-        long remaining = file.IsForm2 ? file.DataSize : file.RecordedSize;
+        long remaining = Math.Min(maxBytes, file.IsForm2 ? file.DataSize : file.RecordedSize);
         var buf = new byte[CdSector.Form2DataSize];
         for (long i = 0; i < file.SectorCount && remaining > 0; i++)
         {

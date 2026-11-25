@@ -16,6 +16,8 @@
 | İçerik: özet kartları, filtreler, dosya kartları ve doluluk çubukları | Yardım ve İngilizce arayüz |
 |---|---|
 | ![İçerik sekmesi](docs/screenshots/02-icerik.png) | ![Yardım sekmesi](docs/screenshots/04-help.png) |
+| Video önizleme: oynatma ve kare şeridi | Müzik önizleme: ses dalgası |
+| ![Video önizleme](docs/screenshots/05-onizleme-video.png) | ![Müzik önizleme](docs/screenshots/06-onizleme-muzik.png) |
 
 ---
 
@@ -37,6 +39,7 @@ Her okumanın bir zaman aşımı vardır, bu yüzden program hiç donmaz. Her CD
 - 🧩 **Sektör sektör kurtarma:** İlerleme kaydedilir, istediğiniz zaman durdurup devam edebilirsiniz.
 - 📀 **ISO kalıbı:** Veri CD'leri birebir kopyalanır. Video CD'lerde tüm dosyalar eksiksiz olarak yeni bir ISO'ya yerleştirilir. Ayrıca ham `.bin/.cue` kopya da tutulur.
 - 🖥️ **Sanal CD:** Tek tıkla Windows'a sürücü olarak bağlanır ve Gezgin'de açılır.
+- 👁️ **Önizleme:** Çift tıklayınca (veya Boşluk) fotoğraflar gösterilir, videolar ve müzikler uygulamanın içinde oynatılır. Videolarda kare şeridi, müziklerde ses dalgası vardır; hasarlı dosyalar da önizlenir.
 - 📂 **İçerik görüntüleme:** Dosya ağacında her dosyanın sağlam mı, kaç sektörünün bozuk olduğu gösterilir. Çift tıklayınca dosya açılır.
 - 🎬 **Video → MP4:** Taramalı görüntü düzeltilir (bwdif), parazit azaltılır, görüntü 720p / 1080p'ye büyütülüp keskinleştirilir, H.264 veya H.265 olarak kaydedilir. Bozuk sektörlü videolar da işlenir.
 - ⚡ **Tek tıkla kurtarma:** Diski okur, dosyaları çıkarır, videoları MP4'e, şarkıları MP3/FLAC'a çevirir, rapor yazar; her şey tek klasörde.

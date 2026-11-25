@@ -207,6 +207,77 @@ public static partial class VideoConverter
         if (p.ExitCode != 0) throw new IOException($"FFmpeg failed on {Path.GetFileName(input)} (exit code {p.ExitCode}).");
     }
 
+    // ------------------------------------------------------------------ previews
+
+    private static IEnumerable<string> InputArgs(string input)
+    {
+        yield return "-fflags"; yield return "+genpts+discardcorrupt";
+        yield return "-err_detect"; yield return "ignore_err";
+        yield return "-probesize"; yield return "200M";
+        yield return "-analyzeduration"; yield return "200M";
+        if (Path.GetExtension(input).ToLowerInvariant() is ".mpg" or ".mpeg" or ".dat" or ".vob") { yield return "-f"; yield return "mpeg"; }
+    }
+
+    private static async Task<(int Exit, string Err)> RunAsync(string ffmpeg, IEnumerable<string> args, CancellationToken ct)
+    {
+        var psi = new ProcessStartInfo(ffmpeg) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        using var p = Process.Start(psi)!;
+        var err = p.StandardError.ReadToEndAsync(CancellationToken.None);
+        _ = p.StandardOutput.ReadToEndAsync(CancellationToken.None);
+        using (ct.Register(() => { try { p.Kill(true); } catch { } }))
+            await p.WaitForExitAsync(CancellationToken.None);
+        ct.ThrowIfCancellationRequested();
+        return (p.ExitCode, await err);
+    }
+
+    /// <summary>Length of a media file in seconds (0 if unknown).</summary>
+    public static async Task<double> GetDurationAsync(string ffmpeg, string input, CancellationToken ct)
+    {
+        var (_, err) = await RunAsync(ffmpeg, ["-hide_banner", .. InputArgs(input), "-i", input], ct);
+        var m = DurationRegex().Match(err);
+        return m.Success ? TimeSpan.ParseExact(m.Groups[1].Value, @"hh\:mm\:ss\.ff", CultureInfo.InvariantCulture).TotalSeconds : 0;
+    }
+
+    /// <summary>A quick, small H.264 clip that Windows can play everywhere (for the preview window).</summary>
+    public static async Task MakePreviewClipAsync(string ffmpeg, string input, string output, double seconds, CancellationToken ct)
+    {
+        var (exit, _) = await RunAsync(ffmpeg,
+        [
+            "-hide_banner", "-y", "-nostdin", .. InputArgs(input), "-i", input, "-t", seconds.ToString(CultureInfo.InvariantCulture),
+            "-map", "0:v:0", "-map", "0:a:0?",
+            "-vf", "bwdif=mode=send_frame:deint=interlaced,scale=trunc(ih*dar/2)*2:ih,setsar=1,scale=-2:480:flags=bicubic,format=yuv420p",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "24", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", output,
+        ], ct);
+        if (exit != 0 || !File.Exists(output)) throw new IOException("Preview clip failed.");
+    }
+
+    /// <summary>One frame as PNG (width in pixels, height keeps the picture's shape).</summary>
+    public static async Task<bool> ExtractFrameAsync(string ffmpeg, string input, double atSeconds, string outputPng, int width, CancellationToken ct)
+    {
+        var (exit, _) = await RunAsync(ffmpeg,
+        [
+            "-hide_banner", "-y", "-nostdin", "-ss", atSeconds.ToString("0.###", CultureInfo.InvariantCulture), .. InputArgs(input), "-i", input,
+            "-frames:v", "1", "-vf", $"scale=trunc(ih*dar/2)*2:ih,setsar=1,scale={width}:-2", outputPng,
+        ], ct);
+        return exit == 0 && File.Exists(outputPng);
+    }
+
+    /// <summary>A waveform picture of the sound.</summary>
+    public static async Task<bool> WaveformAsync(string ffmpeg, string input, string outputPng, int width, int height, string colorHex, CancellationToken ct)
+    {
+        var (exit, _) = await RunAsync(ffmpeg,
+        [
+            "-hide_banner", "-y", "-nostdin", .. InputArgs(input), "-i", input,
+            "-filter_complex", $"[0:a:0]aformat=channel_layouts=mono,showwavespic=s={width}x{height}:colors={colorHex}:scale=sqrt", "-frames:v", "1", outputPng,
+        ], ct);
+        return exit == 0 && File.Exists(outputPng);
+    }
+
+    /// <summary>Re-encodes any sound to MP3 so Windows can play it in the preview.</summary>
+    public static Task AudioPreviewAsync(string ffmpeg, string input, string outputMp3, CancellationToken ct) =>
+        ConvertAudioAsync(ffmpeg, input, outputMp3, AudioFormat.Mp3, ct);
+
     [GeneratedRegex(@"Duration:\s*(\d{2}:\d{2}:\d{2}\.\d{2})")]
     private static partial Regex DurationRegex();
 

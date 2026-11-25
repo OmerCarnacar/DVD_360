@@ -73,7 +73,27 @@ public partial class MainWindow : Window
         _deviceDebounce.Tick += (_, _) => { _deviceDebounce.Stop(); RefreshDrives(); };
         UpdateFfmpegStatus();
         ShowContent(null, "", null);
-        Loaded += (_, _) => { RefreshDrives(); _ = CheckForUpdateAsync(); };
+        Loaded += (_, _) =>
+        {
+            RefreshDrives();
+            _ = CheckForUpdateAsync();
+            PreviewWindow.SweepOld();
+            // "DVD360.exe image.iso" or an image dropped on the exe: open it straight away
+            var arg = Environment.GetCommandLineArgs().Skip(1).FirstOrDefault(a => ImageExtensions.Contains(Path.GetExtension(a).ToLowerInvariant()) && File.Exists(a));
+            if (arg != null)
+            {
+                LoadImage(arg);
+                Tabs.SelectedIndex = 1;
+                // "--preview <path in image>": open that file in the preview window right away
+                var args = Environment.GetCommandLineArgs();
+                int i = Array.IndexOf(args, "--preview");
+                if (i > 0 && i + 1 < args.Length && _rootNode != null)
+                {
+                    var node = _rootNode.SelfAndDescendants().FirstOrDefault(n => string.Equals(n.Entry.FullPath, args[i + 1], StringComparison.OrdinalIgnoreCase));
+                    if (node != null) { FileList.SelectedItem = node; OpenPreview(); }
+                }
+            }
+        };
         Closing += OnClosing;
     }
 
@@ -187,8 +207,11 @@ public partial class MainWindow : Window
         if (earlier != null) AddLog(Loc.T("FoundEarlier", Path.GetFileName(earlier)));
         Disc.SetMode(DiscViewMode.Idle, label);
 
-        _fs = fs;
-        ShowContent(fs, Loc.T("SourceLive", letter), fs == null ? fsError : null);
+        if (_image == null) // an image the user opened keeps the contents view
+        {
+            _fs = fs;
+            ShowContent(fs, Loc.T("SourceLive", letter), fs == null ? fsError : null);
+        }
         UpdateTarget();
         if (fs != null && fs.HasForm2Files) AddLog(Loc.I.English ? "Video CD detected. After the rescue the videos can be turned into MP4." : "Video CD algılandı. Kurtarmadan sonra videolar MP4'e çevrilebilir.");
     }
@@ -363,16 +386,17 @@ public partial class MainWindow : Window
         return d as T;
     }
 
-    private MenuItem MenuRescueThis => (MenuItem)((ContextMenu)FileList.ContextMenu).Items[0];
-    private MenuItem MenuOpenThis => (MenuItem)((ContextMenu)FileList.ContextMenu).Items[1];
-    private MenuItem MenuToggleThis => (MenuItem)((ContextMenu)FileList.ContextMenu).Items[3];
+    private MenuItem MenuPreviewThis => (MenuItem)((ContextMenu)FileList.ContextMenu).Items[0];
+    private MenuItem MenuRescueThis => (MenuItem)((ContextMenu)FileList.ContextMenu).Items[1];
+    private MenuItem MenuOpenThis => (MenuItem)((ContextMenu)FileList.ContextMenu).Items[2];
+    private MenuItem MenuToggleThis => (MenuItem)((ContextMenu)FileList.ContextMenu).Items[4];
 
     private void TreeMenu_Opened(object sender, RoutedEventArgs e)
     {
         _menuNode = SelectedNode as FileNode;
         bool has = _menuNode != null;
         MenuRescueThis.IsEnabled = MenuToggleThis.IsEnabled = has && _engine == null;
-        MenuOpenThis.IsEnabled = has && _menuNode!.Entry.IsDirectory == false;
+        MenuOpenThis.IsEnabled = MenuPreviewThis.IsEnabled = has && _menuNode!.Entry.IsDirectory == false;
         if (!has) { MenuRescueThis.Header = Loc.T("RescueSelected"); return; }
         MenuRescueThis.Header = Loc.T(_menuNode!.Entry.IsDirectory ? "MenuRescueFolder" : "MenuRescueFile", _menuNode.Name);
         MenuToggleThis.Header = Loc.T(_menuNode.IsChecked == true ? "MenuUnpick" : "MenuPick");
@@ -392,7 +416,7 @@ public partial class MainWindow : Window
         UpdateSelectionText();
     }
 
-    private void MenuOpenThis_Click(object sender, RoutedEventArgs e) => FileTree_DoubleClick(sender, null!);
+    private void MenuOpenThis_Click(object sender, RoutedEventArgs e) => OpenWithWindows();
     private void RetryBad_Click(object sender, RoutedEventArgs e) => _ = RunRescueAsync(retryBad: true, _scopeRanges);
     private List<(long Start, long Count)>? _scopeRanges; // set while only picked files are being rescued
     private void Stop_Click(object sender, RoutedEventArgs e) => _rescueCts?.Cancel();
@@ -830,7 +854,28 @@ public partial class MainWindow : Window
         ContentStatus.Text = "";
     }
 
-    private async void FileTree_DoubleClick(object sender, MouseButtonEventArgs e)
+    /// <summary>Double-click, Space or "Preview": photos, videos, music and text open in the preview window.</summary>
+    private void FileTree_DoubleClick(object sender, MouseButtonEventArgs? e) => OpenPreview();
+
+    private void MenuPreview_Click(object sender, RoutedEventArgs e) => OpenPreview();
+
+    private void FileList_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key is Key.Space or Key.Enter) { OpenPreview(); e.Handled = true; }
+    }
+
+    private void OpenPreview()
+    {
+        if (SelectedNode is not FileNode { Entry.IsDirectory: false } node || _fs == null) return;
+        bool live = _fs.Source is LiveDiscSource;
+        if (live && (_liveDevice == null || _engine != null)) { MessageBox.Show(this, Loc.T("PreviewBusy"), "DVD 360"); return; }
+        var preview = new PreviewWindow(node, _fs, live) { Owner = this };
+        preview.Show();
+        preview.Activate();
+    }
+
+    /// <summary>"Open" in the menu: copies the file out and hands it to its Windows program.</summary>
+    private async void OpenWithWindows()
     {
         if (SelectedNode is not FileNode { Entry.IsDirectory: false } node || _fs == null || _contentBusy) return;
         if (_fs.Source is LiveDiscSource && _liveDevice == null) { MessageBox.Show(this, Loc.T("RescueFirst"), "DVD 360"); return; }

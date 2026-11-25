@@ -311,6 +311,24 @@ public sealed class IsoBuilderTests : IDisposable
     }
 
     [Fact]
+    public void Preview_copies_only_the_start_of_a_big_file()
+    {
+        string src = Path.Combine(_dir, "big");
+        Directory.CreateDirectory(src);
+        var data = new byte[2048 * 50 + 300];
+        new Random(5).NextBytes(data);
+        File.WriteAllBytes(Path.Combine(src, "film.mpg"), data);
+        string iso = Path.Combine(_dir, "big.iso");
+        IsoBuilder.Write(BuildNode.FromFolder(src), "B", iso);
+        using var img = DiscImage.Open(iso);
+        var fs = IsoFileSystem.TryOpen(img, out _)!;
+        var ms = new MemoryStream();
+        fs.CopyFile(fs.Files.Single(), ms, 10_000);
+        Assert.Equal(10_000, ms.Length);
+        Assert.Equal(data.AsSpan(0, 10_000).ToArray(), ms.ToArray());
+    }
+
+    [Fact]
     public async Task Damaged_sectors_are_reported_per_file()
     {
         string src = Path.Combine(_dir, "src2");
