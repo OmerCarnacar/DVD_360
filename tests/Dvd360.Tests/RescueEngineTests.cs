@@ -25,9 +25,13 @@ internal sealed class FakeDevice : ISectorDevice
 
     public static byte Pattern(long lba, int i) => (byte)(lba * 31 + i);
 
+    /// <summary>Called on every read, e.g. to cancel at an exact point.</summary>
+    public Action<int>? OnRead { get; set; }
+
     public ReadOutcome Read(long lba, int count, Span<byte> dest)
     {
         ReadCalls++;
+        OnRead?.Invoke(ReadCalls);
         if (EjectAtLba is { } e && lba <= e && e < lba + count) { EjectAtLba = null; return ReadOutcome.NoMedia; }
         for (long s = lba; s < lba + count; s++)
         {
@@ -167,11 +171,9 @@ public sealed class RescueEngineTests : IDisposable
         var dev = new FakeDevice(100_000);
         var engine = new RescueEngine(dev, Img);
         using var cts = new CancellationTokenSource();
-        engine.Log += _ => { };
-        var t = engine.RunAsync(cts.Token);
-        await Task.Delay(30);
-        cts.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => t);
+        dev.OnRead = n => { if (n == 50) cts.Cancel(); }; // deterministic: stop after exactly 50 reads
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => engine.RunAsync(cts.Token));
+        Assert.InRange(engine.OkSectors, 1, 99_999);
         Assert.True(File.Exists(engine.MapPath));
         var loaded = SectorMap.Load(engine.MapPath);
         Assert.Equal(engine.OkSectors, loaded.CountOf(SectorState.Ok));

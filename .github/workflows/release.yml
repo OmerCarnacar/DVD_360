@@ -13,9 +13,9 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "11.0.x"
 
@@ -36,7 +36,7 @@ jobs:
           if ($p.HasExited -and $p.ExitCode -ne 0) { throw "DVD360.exe crashed on start (exit code $($p.ExitCode))" }
           if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: DVD360-win-x64
           path: DVD360-win-x64.zip
