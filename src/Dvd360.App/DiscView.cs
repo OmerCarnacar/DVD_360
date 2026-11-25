@@ -19,23 +19,19 @@ public enum DiscViewMode { Empty, Detecting, Idle, Reading, Done }
 /// </summary>
 public sealed class DiscView : Grid
 {
-    private const int Px = 440;                              // surface bitmap size
-    private const int Rings = 60, Segments = 128, Cells = Rings * Segments;
+    private const int Px = 768;                              // only for the soft rainbow sheen
+    private const int Rings = 72, Segments = 160, Cells = Rings * Segments;
     private const double InnerR = 0.30, OuterR = 0.985;      // data area, as a fraction of the disc radius
     private const double Inset = 18;                         // room for the progress ring
 
-    // surface
-    private readonly WriteableBitmap _bitmap = new(Px, Px, 96, 96, PixelFormats.Pbgra32, null);
-    private readonly int[] _pixelCell = new int[Px * Px];    // >=0 data cell, -1 outside, -2 hub, -3 hole, -4 clear ring, -5 hub edge
-    private readonly byte[] _pixelShade = new byte[Px * Px];
-    private readonly uint[] _pixels = new uint[Px * Px];
+    // surface (drawn as vector geometry, sharp at any size and DPI)
     private readonly int[] _cellColor = new int[Cells], _prevColor = new int[Cells];
     private readonly float[] _flash = new float[Cells];
     private readonly bool[] _highlight = new bool[Cells];
     private bool _hasHighlight;
 
     // visuals
-    private readonly Image _surface = new() { Stretch = Stretch.Fill };
+    private readonly VectorSurface _surface;
     private readonly Image _rainbow = new() { Stretch = Stretch.Fill, IsHitTestVisible = false };
     private readonly Grid _disc = new();
     private readonly RotateTransform _spin = new();
@@ -58,10 +54,6 @@ public sealed class DiscView : Grid
     private SectorMap? _lastMap;
     private long _lastLba, _total = 1;
     private bool _hasPrev;
-
-    private static readonly uint Silver = Rgb(0xCB, 0xD3, 0xDE), Ok = Rgb(0x2E, 0xD5, 0x73), OkLight = Rgb(0x8E, 0xE6, 0xB0),
-        Bad = Rgb(0xB3, 0x12, 0x2E), Retry = Rgb(0xFF, 0x4D, 0x5E), Skipped = Rgb(0x3A, 0x42, 0x52),
-        Hub = Rgb(0x1C, 0x24, 0x34), HubEdge = Rgb(0x3A, 0x47, 0x60), Flash = Rgb(0xE6, 0xFF, 0xF4);
 
     public static readonly DependencyProperty ProgressProperty = DependencyProperty.Register(
         nameof(Progress), typeof(double), typeof(DiscView), new PropertyMetadata(0.0, (d, _) => ((DiscView)d).UpdateRing()));
@@ -101,11 +93,8 @@ public sealed class DiscView : Grid
     {
         Width = Height = 300;
         Background = Brushes.Transparent; // receive mouse events everywhere
-        PrecomputeGeometry();
-
         // --- the disc (rotates) + light reflection (does not rotate, like real light)
-        _surface.Source = _bitmap;
-        RenderOptions.SetBitmapScalingMode(_surface, BitmapScalingMode.HighQuality);
+        _surface = new VectorSurface(this);
         _surface.RenderTransformOrigin = new Point(0.5, 0.5);
         _surface.RenderTransform = _spin;
         _rainbow.Source = BuildRainbow();
@@ -169,36 +158,7 @@ public sealed class DiscView : Grid
         SetMode(DiscViewMode.Empty, Loc.T("InsertDisc"));
     }
 
-    private static uint Rgb(byte r, byte g, byte b) => 0xFF000000u | (uint)(r << 16 | g << 8 | b);
-
     // ------------------------------------------------------------------ geometry
-
-    private void PrecomputeGeometry()
-    {
-        double c = (Px - 1) / 2.0, R = Px / 2.0, r0 = InnerR * R, r1 = OuterR * R;
-        for (int y = 0; y < Px; y++)
-        for (int x = 0; x < Px; x++)
-        {
-            int i = y * Px + x;
-            double dx = x - c, dy = y - c, r = Math.Sqrt(dx * dx + dy * dy);
-            if (r > R) { _pixelCell[i] = -1; continue; }
-            if (r < r0)
-            {
-                _pixelCell[i] = r < 0.105 * R ? -3 : r < 0.125 * R ? -5 : r < 0.235 * R ? -2 : r < 0.25 * R ? -5 : -4;
-                _pixelShade[i] = (byte)(r < 0.235 * R ? 100 - 25 * (r / (0.235 * R)) : 100);
-                continue;
-            }
-            if (r > r1) { _pixelCell[i] = -4; _pixelShade[i] = 100; continue; }
-            double f = (r * r - r0 * r0) / (r1 * r1 - r0 * r0);  // equal area per sector (constant linear velocity)
-            double ringPos = f * Rings;
-            int ring = Math.Min(Rings - 1, (int)ringPos);
-            double ang = (Math.Atan2(dy, dx) + Math.PI) / (2 * Math.PI);
-            int seg = Math.Min(Segments - 1, (int)(ang * Segments));
-            _pixelCell[i] = ring * Segments + seg;
-            // soft radial brightening towards the rim + a faint ring relief
-            _pixelShade[i] = (byte)(86 + 12 * (r / R) + 2 * Math.Sin((ringPos - ring) * Math.PI));
-        }
-    }
 
     /// <summary>A non-rotating rainbow sheen, like light diffracting on the data tracks of a real disc.</summary>
     private static WriteableBitmap BuildRainbow()
@@ -270,6 +230,7 @@ public sealed class DiscView : Grid
             _ => null,
         });
         if (mode == DiscViewMode.Empty) { Progress = 0; ErrorProgress = 0; Render(null, 0); }
+        Compose();
     }
 
     private void StartHeadAnimations()
@@ -351,50 +312,124 @@ public sealed class DiscView : Grid
         if (!any) _flashTimer.Stop();
     }
 
-    private void Compose()
+    private void Compose() => _surface.InvalidateVisual();
+
+    private static readonly Color CSilver = Color.FromRgb(0xCB, 0xD3, 0xDE), COk = Color.FromRgb(0x2E, 0xD5, 0x73), COkLight = Color.FromRgb(0x8E, 0xE6, 0xB0),
+        CBad = Color.FromRgb(0xB3, 0x12, 0x2E), CRetry = Color.FromRgb(0xFF, 0x4D, 0x5E), CSkipped = Color.FromRgb(0x3A, 0x42, 0x52),
+        CFlash = Color.FromRgb(0xE6, 0xFF, 0xF4);
+
+    private static Color Mix(Color a, Color b, double t) =>
+        Color.FromRgb((byte)(a.R + (b.R - a.R) * t), (byte)(a.G + (b.G - a.G) * t), (byte)(a.B + (b.B - a.B) * t));
+
+    private static Color Dim(Color c, double f) => Color.FromRgb((byte)(c.R * f), (byte)(c.G * f), (byte)(c.B * f));
+
+    /// <summary>
+    /// Draws the disc as vector shapes: every run of equal cells along a ring becomes one annular sector, and all
+    /// sectors of one colour share a single geometry, so a full redraw is a handful of DrawGeometry calls.
+    /// </summary>
+    private void DrawSurface(DrawingContext dc, Size size)
     {
-        for (int i = 0; i < _pixels.Length; i++)
+        double R = Math.Min(size.Width, size.Height) / 2;
+        if (R <= 0 || _mode == DiscViewMode.Empty) return;
+        var c = new Point(size.Width / 2, size.Height / 2);
+        double r0 = InnerR * R, r1 = OuterR * R;
+
+        // clear polycarbonate rim and inner clear ring
+        var clear = new SolidColorBrush(Color.FromArgb(0x55, 0xB4, 0xBC, 0xC8));
+        dc.DrawGeometry(clear, null, Annulus(c, r1, R));
+        dc.DrawGeometry(clear, null, Annulus(c, 0.25 * R, r0));
+
+        // data area: group runs by colour
+        var groups = new Dictionary<Color, StreamGeometry>();
+        var contexts = new Dictionary<Color, StreamGeometryContext>();
+        StreamGeometryContext Ctx(Color col)
         {
-            int cell = _pixelCell[i];
-            uint color;
-            switch (cell)
+            if (!contexts.TryGetValue(col, out var g))
             {
-                case -1: case -3: color = 0; break;
-                case -2: color = Shade(Hub, _pixelShade[i]); break;
-                case -5: color = HubEdge; break;
-                case -4: color = 0x60B4BCC8; break; // clear plastic ring (premultiplied below)
-                default:
-                    color = _cellColor[cell] switch { 1 => Ok, 2 => Retry, 3 => Bad, 4 => Skipped, 5 => OkLight, _ => Silver };
-                    float fl = _flash[cell];
-                    if (fl > 0) color = Lerp(color, Flash, fl * 0.85f);
-                    byte shade = _pixelShade[i];
-                    if (_hasHighlight && !_highlight[cell]) shade = (byte)(shade * 30 / 100);
-                    color = Shade(color, shade);
-                    break;
+                var geo = new StreamGeometry { FillRule = FillRule.Nonzero };
+                groups[col] = geo;
+                g = contexts[col] = geo.Open();
             }
-            _pixels[i] = Premultiply(color);
+            return g;
         }
-        _bitmap.WritePixels(new Int32Rect(0, 0, Px, Px), _pixels, Px * 4, 0);
+        double area = r1 * r1 - r0 * r0;
+        for (int ring = 0; ring < Rings; ring++)
+        {
+            double ri = Math.Sqrt(r0 * r0 + area * ring / Rings);
+            double ro = Math.Sqrt(r0 * r0 + area * (ring + 1) / Rings);
+            int seg = 0;
+            while (seg < Segments)
+            {
+                int cell = ring * Segments + seg;
+                var col = CellColor(cell);
+                int end = seg + 1;
+                while (end < Segments && CellColor(ring * Segments + end) == col) end++;
+                AddSector(Ctx(col), c, ri, ro, seg, end);
+                seg = end;
+            }
+        }
+        foreach (var (col, ctx) in contexts) ctx.Close();
+        foreach (var (col, geo) in groups)
+        {
+            geo.Freeze();
+            var b = new SolidColorBrush(col);
+            b.Freeze();
+            dc.DrawGeometry(b, null, geo);
+        }
+
+        // depth: darker towards the centre, plus faint track grooves
+        var depth = new RadialGradientBrush(
+            [new GradientStop(Color.FromArgb(0x30, 0, 0, 0), 0.30), new GradientStop(Color.FromArgb(0x00, 0, 0, 0), 1.0)]) { Center = new Point(0.5, 0.5), GradientOrigin = new Point(0.5, 0.5) };
+        dc.DrawGeometry(depth, null, Annulus(c, r0, r1));
+        var groove = new Pen(new SolidColorBrush(Color.FromArgb(0x16, 0, 0, 0)), Math.Max(0.4, R / 600));
+        for (int ring = 6; ring < Rings; ring += 6)
+            dc.DrawEllipse(null, groove, c, Math.Sqrt(r0 * r0 + area * ring / Rings), Math.Sqrt(r0 * r0 + area * ring / Rings));
+
+        // hub: dark glass with a bright edge, and the hole in the middle
+        var hub = new RadialGradientBrush(Color.FromRgb(0x2A, 0x34, 0x48), Color.FromRgb(0x12, 0x18, 0x24));
+        dc.DrawGeometry(hub, new Pen(new SolidColorBrush(Color.FromRgb(0x46, 0x55, 0x72)), Math.Max(1, R / 140)), Annulus(c, 0.105 * R, 0.235 * R));
+        dc.DrawEllipse(null, new Pen(new SolidColorBrush(Color.FromArgb(0x90, 0xFF, 0xFF, 0xFF)), Math.Max(0.6, R / 300)), c, R - 0.5, R - 0.5);
     }
 
-    private static uint Premultiply(uint c)
+    private Color CellColor(int cell)
     {
-        uint a = c >> 24;
-        if (a == 255) return c;
-        return a << 24 | ((c >> 16 & 0xFF) * a / 255) << 16 | ((c >> 8 & 0xFF) * a / 255) << 8 | (c & 0xFF) * a / 255;
+        var col = _cellColor[cell] switch { 1 => COk, 2 => CRetry, 3 => CBad, 4 => CSkipped, 5 => COkLight, _ => CSilver };
+        float fl = _flash[cell];
+        if (fl > 0) col = Mix(col, CFlash, Math.Round(fl * 8) / 8 * 0.85); // quantised so runs stay long
+        if (_hasHighlight && !_highlight[cell]) col = Dim(col, 0.3);
+        return col;
     }
 
-    private static uint Lerp(uint a, uint b, float t)
+    private static Geometry Annulus(Point c, double inner, double outer)
     {
-        uint Ch(int s) => (uint)((a >> s & 0xFF) + ((int)(b >> s & 0xFF) - (int)(a >> s & 0xFF)) * t) & 0xFF;
-        return 0xFF000000u | Ch(16) << 16 | Ch(8) << 8 | Ch(0);
+        var g = new GeometryGroup { FillRule = FillRule.EvenOdd };
+        g.Children.Add(new EllipseGeometry(c, outer, outer));
+        g.Children.Add(new EllipseGeometry(c, inner, inner));
+        g.Freeze();
+        return g;
     }
 
-    private static uint Shade(uint c, byte pct)
+    /// <summary>Annular sector for segments [from, to) of a ring; angle 0 matches Math.Atan2 + π (as used for hit testing).</summary>
+    private static void AddSector(StreamGeometryContext g, Point c, double ri, double ro, int from, int to)
     {
-        if (pct >= 100) return c;
-        uint r = (c >> 16 & 0xFF) * pct / 100, g = (c >> 8 & 0xFF) * pct / 100, b = (c & 0xFF) * pct / 100;
-        return (c & 0xFF000000) | r << 16 | g << 8 | b;
+        double a0 = -Math.PI + 2 * Math.PI * from / Segments, a1 = -Math.PI + 2 * Math.PI * to / Segments;
+        if (to - from == Segments) // a whole ring: two half arcs (an arc cannot end where it starts)
+        {
+            AddSector(g, c, ri, ro, from, from + Segments / 2);
+            AddSector(g, c, ri, ro, from + Segments / 2, to);
+            return;
+        }
+        Point P(double r, double a) => new(c.X + r * Math.Cos(a), c.Y + r * Math.Sin(a));
+        bool large = a1 - a0 > Math.PI;
+        g.BeginFigure(P(ro, a0), true, true);
+        g.ArcTo(P(ro, a1), new Size(ro, ro), 0, large, SweepDirection.Clockwise, false, false);
+        g.LineTo(P(ri, a1), false, false);
+        g.ArcTo(P(ri, a0), new Size(ri, ri), 0, large, SweepDirection.Counterclockwise, false, false);
+    }
+
+    private sealed class VectorSurface(DiscView owner) : FrameworkElement
+    {
+        protected override void OnRender(DrawingContext dc) => owner.DrawSurface(dc, RenderSize);
     }
 
     private void UpdateRing()

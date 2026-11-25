@@ -1106,7 +1106,9 @@ public partial class MainWindow : Window
     private void ShowFileInfo(FileNode n)
     {
         FileInfoCard.Visibility = Visibility.Visible;
-        FileInfoName.Text = n.Icon + "  " + (n.Entry.IsDirectory ? n.Entry.FullPath : n.Name);
+        FileInfoName.Inlines.Clear();
+        FileInfoName.Inlines.Add(new System.Windows.Documents.Run(n.Glyph) { FontFamily = (System.Windows.Media.FontFamily)FindResource("Icons"), Foreground = n.TileFore });
+        FileInfoName.Inlines.Add(new System.Windows.Documents.Run("   " + (n.Entry.IsDirectory ? n.Entry.FullPath : n.Name)));
         string where = n.Entry.SectorCount > 0 && !n.Entry.IsDirectory ? $"  •  LBA {n.Entry.Extent:N0}–{n.Entry.Extent + n.Entry.SectorCount - 1:N0}" : "";
         FileInfoState.Text = (n.StateText.Length > 0 ? n.StateText : Loc.T("StateUnknown")) + where;
         FileInfoState.Foreground = n.StateBrush;

@@ -182,7 +182,7 @@ public sealed class Loc : INotifyPropertyChanged
         ["ViewTree"] = ("Klasör ağacı", "Folder tree"),
         ["ChipErrors"] = ("{0:N0} hatalı", "{0:N0} errors"),
         ["ChipUnread"] = ("Okunmadı", "Not read"),
-        ["OneClick"] = ("⚡ Tek tıkla kurtar", "⚡ One-click rescue"),
+        ["OneClick"] = ("Tek tıkla kurtar", "One-click rescue"),
         ["OneClickTip"] = ("Diski okur, dosyaları çıkarır, videoları MP4'e ve şarkıları FLAC/WAV'a çevirir, rapor yazar. Her şey kayıt yerindeki bir klasöre gelir.",
                            "Reads the disc, extracts the files, turns videos into MP4 and songs into FLAC/WAV, writes a report. Everything lands in one folder in the save place."),
         ["OneClickConfirm"] = ("Tek tıkla kurtarma başlasın mı?\n\n1. Disk sektör sektör okunur\n2. Dosyalar çıkarılır\n3. Videolar MP4'e çevrilir\n4. Şarkılar kaydedilir\n5. Rapor yazılır\n\nKayıt yeri: {0}\nUzun sürebilir; \"Bitince\" seçeneğiyle bilgisayarı kapatabilirsiniz.",

@@ -1,4 +1,8 @@
-# DVD 360 — Çizik CD / DVD Kurtarma
+<p align="center">
+  <img src="docs/dvd360-animated.svg" width="320" alt="DVD 360: disk merkezden dışa doğru sektör sektör okunuyor; yeşil = dolu, kırmızı = hatalı">
+</p>
+
+# <img src="docs/logo.svg" width="36" align="top" alt=""> DVD 360 — Çizik CD / DVD Kurtarma
 
 **Ücretsiz ve açık kaynak** Windows uygulaması. Çizilmiş, eskimiş, Windows'un "okunamıyor" dediği CD, DVD ve Blu-ray disklerinden **sektör sektör** veri kurtarır. Kurtarılan diski ISO kalıbı yapar ve sanal CD olarak açar. Eski Video CD / DVD görüntülerini de iyileştirilmiş **MP4**'e çevirir.
 
