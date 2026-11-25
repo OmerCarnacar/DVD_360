@@ -4,6 +4,15 @@
 
 *Free, open-source Windows app that rescues data from scratched CDs/DVDs sector by sector, saves ISO images, mounts them as a virtual drive and converts old video to upscaled MP4. [English below](#english).*
 
+[![İndir / Download](https://img.shields.io/github/v/release/OmerCarnacar/DVD_360?label=%C4%B0ndir%20%2F%20Download&style=for-the-badge)](https://github.com/OmerCarnacar/DVD_360/releases/latest)
+[![Lisans: MIT](https://img.shields.io/badge/Lisans-MIT-green?style=for-the-badge)](LICENSE)
+
+![Kurtarma ekranı: disk, okunan (yeşil), tekrar denenecek (turuncu) ve henüz okunmamış (gümüş) bölgeleri gerçek konumlarında gösteriyor](docs/screenshots/01-kurtarma.png)
+
+| İçerik: her dosyanın durumu, seçilen dosya diskte parlıyor | Yardım ve İngilizce arayüz |
+|---|---|
+| ![İçerik sekmesi](docs/screenshots/02-icerik.png) | ![Yardım sekmesi](docs/screenshots/04-help.png) |
+
 ---
 
 ## Neden?
@@ -86,6 +95,8 @@ FFmpeg ayrı bir programdır ve kendi lisansıyla (GPL) indirilir; DVD 360'a gö
 ---
 
 ## English
+
+![Rescue screen in English](docs/screenshots/03-english.png)
 
 DVD 360 reads scratched discs **sector by sector** through SCSI pass-through, with a per-command timeout and its own EDC verification. It uses a ddrescue-style multi-pass strategy and keeps a resumable map. It can then:
 

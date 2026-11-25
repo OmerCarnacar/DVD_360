@@ -151,6 +151,7 @@ public sealed class Loc : INotifyPropertyChanged
         ["About"] = ("Hakkında", "About"),
         ["AboutText"] = ("DVD 360 — ücretsiz ve açık kaynak (MIT lisansı).\nGeliştirici: Ömer Çarnaçar", "DVD 360 — free and open source (MIT license).\nDeveloper: Ömer Çarnaçar"),
         ["Error"] = ("Hata", "Error"),
+        ["Sectors"] = ("sektör", "sectors"),
         ["RescueMode"] = ("Kurtarma şekli", "What to rescue"),
         ["ModeWhole"] = ("Tüm disk (sektör sektör)", "Whole disc (sector by sector)"),
         ["ModeSelected"] = ("Yalnızca seçtiğim dosya ve klasörler", "Only the files and folders I pick"),

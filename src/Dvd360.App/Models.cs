@@ -123,6 +123,9 @@ public sealed class FileNode : Observable
         return t;
     }
 
+    /// <summary>Screen readers and UI automation read this as the item's name.</summary>
+    public override string ToString() => Name;
+
     /// <summary>Sector ranges this node covers on the disc (a folder covers all its files).</summary>
     public IEnumerable<(long Start, long Count)> Ranges() =>
         Entry.IsDirectory

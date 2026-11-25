@@ -168,7 +168,7 @@ public partial class MainWindow : Window
         DiscStatus.Foreground = (System.Windows.Media.Brush)FindResource("OkBrush");
         InfoMedia.Text = _disc.MediaType + (fs?.HasForm2Files == true ? "  (Video CD)" : "");
         InfoLabel.Text = string.IsNullOrWhiteSpace(_disc.VolumeLabel) ? fs?.VolumeId ?? "—" : _disc.VolumeLabel;
-        InfoSize.Text = $"{FormatBytes(_disc.TotalBytes)}  ({_disc.TotalSectors:N0} sektör)".Replace("sektör", Loc.I.English ? "sectors" : "sektör");
+        ShowDiscTexts();
         InfoTracks.Text = string.Join(", ", _disc.Tracks.Select(t => $"{t.Number}:{(t.IsData ? "data" : "audio")}"));
         InfoDrive.Text = _disc.DriveName;
         ExtText.Text = _disc.ImageExtension;
@@ -1043,12 +1043,22 @@ public partial class MainWindow : Window
     // misc
     // =====================================================================
 
+    /// <summary>Disc texts that code writes (XAML-bound texts follow the language by themselves).</summary>
+    private void ShowDiscTexts()
+    {
+        if (_disc == null) { DiscStatus.Text = Loc.T(_driveLetter == null ? "NoDrive" : "InsertDisc"); return; }
+        DiscStatus.Text = "✔ " + Loc.T("DiscDetected");
+        InfoSize.Text = $"{FormatBytes(_disc.TotalBytes)}  ({_disc.TotalSectors:N0} {Loc.T("Sectors")})";
+    }
+
     private void Lang_Click(object sender, RoutedEventArgs e)
     {
         Loc.I.Toggle();
         CoreText.Turkish = !Loc.I.English;
         Title = "DVD 360 — " + Loc.T("AppSubtitle");
         UpdateFfmpegStatus();
+        ShowDiscTexts();
+        UpdateSelectionText();
         UpdateTarget();
         if (_fs != null) ShowContent(_fs, _fs.Source is LiveDiscSource ? Loc.T("SourceLive", _driveLetter ?? "?") : Loc.T("SourceImage", Path.GetFileName(((DiscImage)_fs.Source).Path)), null);
     }
